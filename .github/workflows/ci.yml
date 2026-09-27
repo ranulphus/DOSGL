@@ -7,6 +7,7 @@ env:
   MGA_NO_DOCKER: "1"
   MGA_CACHE: ${{ github.workspace }}/.mga-cache
   DJGPP_PREFIX: ${{ github.workspace }}/.mga-opt/djgpp
+  WATCOM: ${{ github.workspace }}/.mga-opt/watcom
 
 jobs:
   host:
@@ -38,11 +39,14 @@ jobs:
       - run: sudo apt-get update && xargs -a third_party/mgahal/tools/docker/packages.txt sudo apt-get install -y --no-install-recommends
       - uses: actions/cache@v4
         with: { path: .mga-opt/djgpp, key: "djgpp-${{ hashFiles('third_party/mgahal/tools/setup/versions.mk') }}" }
+      # Open Watcom builds the DOS helpers in C:\HX and supplies DOS4GW.EXE, which Loop A puts in every VM.
+      - uses: actions/cache@v4
+        with: { path: .mga-opt/watcom, key: "ow-${{ hashFiles('third_party/mgahal/tools/setup/versions.mk') }}" }
       - uses: actions/cache@v4
         with:
           path: .mga-cache/86box
           key: "86box-${{ hashFiles('third_party/mgahal/tools/setup/versions.mk', 'third_party/mgahal/tools/86box/series', 'third_party/mgahal/tools/86box/patches/**') }}"
-      - run: make setup-djgpp
+      - run: make setup-djgpp setup-ow
       - run: make 86box
       - run: make loopa TEST=hello CARD=${{ matrix.card }}
       - if: always()
