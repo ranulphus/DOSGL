@@ -1,0 +1,445 @@
+/* emit.c - from the vertex stream to the drawing engine (FR-TS-1..3).
+ *
+ * begin() validates dirty state into registers: DWGCTL (depth), ALPHACTRL
+ * (blend, alpha test), MACCESS fog enable, FOGCOL, PLNWT (colour mask) and
+ * the scissor. Each triangle is clipped (near/far and a guard band),
+ * projected to 1/16-pixel screen coordinates, culled, and handed to the
+ * HAL's setup_triangle. Lines and points become screen-space quads. */
+#include "gl_state.h"
+#include "gl_draw.h"
+#include "gl_tex.h"
+#include "../dgl/dgl.h"
+#include "mga/tex.h"
+#include "mga/mmio.h"
+#include "mga/regs_mga.h"
+#include "mga/setup.h"
+#include <math.h>
+#include <string.h>
+
+GLenum dgl_tex_env_mode(void);
+
+static mga_tri_ctx tctx;
+static mga_texstate tstate;
+static int textured;                  /* 0 none, 1 the bound texture, 2 the white texture (fog) */
+static float tex_scale_s = 1, tex_scale_t = 1;   /* logical / stored size (small textures are widened to 8) */
+static int skip_all;                  /* depth or alpha function NEVER, or no context */
+static float guard_x, guard_y;
+
+/* ---- State validation --------------------------------------------------- */
+static uint32_t zmode_for(GLenum f)
+{
+    switch (f) {
+    case GL_LESS:     return DWG_ZMODE_ZLT;
+    case GL_EQUAL:    return DWG_ZMODE_ZE;
+    case GL_LEQUAL:   return DWG_ZMODE_ZLTE;
+    case GL_GREATER:  return DWG_ZMODE_ZGT;
+    case GL_NOTEQUAL: return DWG_ZMODE_ZNE;
+    case GL_GEQUAL:   return DWG_ZMODE_ZGTE;
+    default:          return DWG_ZMODE_NOZCMP;       /* ALWAYS */
+    }
+}
+
+static uint32_t src_factor(GLenum f)
+{
+    switch (f) {
+    case GL_ZERO: return BLEND_ZERO;
+    case GL_DST_COLOR: return BLEND_DST_COLOR;
+    case GL_ONE_MINUS_DST_COLOR: return BLEND_ONE_MINUS_DST_COLOR;
+    case GL_SRC_ALPHA: return BLEND_SRC_ALPHA;
+    case GL_ONE_MINUS_SRC_ALPHA: return BLEND_ONE_MINUS_SRC_ALPHA;
+    case GL_DST_ALPHA: return BLEND_DST_ALPHA;
+    case GL_ONE_MINUS_DST_ALPHA: return BLEND_ONE_MINUS_DST_ALPHA;
+    case GL_SRC_ALPHA_SATURATE: return BLEND_SRC_ALPHA_SATURATE;
+    default: return BLEND_ONE;
+    }
+}
+
+static uint32_t dst_factor(GLenum f)
+{
+    switch (f) {
+    case GL_ONE: return BLEND_ONE;
+    case GL_SRC_COLOR: return BLEND_SRC_COLOR;
+    case GL_ONE_MINUS_SRC_COLOR: return BLEND_ONE_MINUS_SRC_COLOR;
+    case GL_SRC_ALPHA: return BLEND_SRC_ALPHA;
+    case GL_ONE_MINUS_SRC_ALPHA: return BLEND_ONE_MINUS_SRC_ALPHA;
+    case GL_DST_ALPHA: return BLEND_DST_ALPHA;
+    case GL_ONE_MINUS_DST_ALPHA: return BLEND_ONE_MINUS_DST_ALPHA;
+    default: return BLEND_ZERO;
+    }
+}
+
+static uint32_t atmode_for(GLenum f)
+{
+    static const uint8_t m[8] = { 0, 4, 2, 5, 6, 3, 7, 0 };   /* NEVER..ALWAYS -> ATMODE codes */
+    return m[(f - GL_NEVER) & 7];
+}
+
+static uint32_t plnwt_for(void)
+{
+    uint32_t m = (dgl_gl.color_mask[0] ? 0xF800u : 0) | (dgl_gl.color_mask[1] ? 0x07E0u : 0) |
+                 (dgl_gl.color_mask[2] ? 0x001Fu : 0);
+    return m | (m << 16);
+}
+
+static void scissor_rows(int *x0, int *y0, int *x1, int *y1)
+{
+    *x0 = 0; *y0 = 0; *x1 = dgl_ctx.width; *y1 = dgl_ctx.height;
+    if (dgl_gl.scissor_test) {
+        int sx0 = dgl_gl.scissor[0], sx1 = dgl_gl.scissor[0] + dgl_gl.scissor[2];
+        int sy0 = dgl_ctx.height - (dgl_gl.scissor[1] + dgl_gl.scissor[3]);     /* GL y is bottom-up */
+        int sy1 = dgl_ctx.height - dgl_gl.scissor[1];
+        if (sx0 > *x0) *x0 = sx0;
+        if (sy0 > *y0) *y0 = sy0;
+        if (sx1 < *x1) *x1 = sx1;
+        if (sy1 < *y1) *y1 = sy1;
+        if (*x1 < *x0) *x1 = *x0;
+        if (*y1 < *y0) *y1 = *y0;
+    }
+}
+
+static void validate(void)
+{
+    int depth = dgl_gl.depth_test && dgl_ctx.z_off;
+    uint32_t alphactrl, zmode = depth ? zmode_for(dgl_gl.depth_func) : DWG_ZMODE_NOZCMP, asel;
+    dgl_texture *tex = dgl_gl.texture_2d ? dgl_bound_texture() : NULL;
+    skip_all = !dgl_ctx.active || (depth && dgl_gl.depth_func == GL_NEVER) ||
+               (dgl_gl.alpha_test && dgl_gl.alpha_func == GL_NEVER);
+    if (dgl_gl.dirty & DGL_DIRTY_TARGET) {
+        int x0, y0, x1, y1;
+        scissor_rows(&x0, &y0, &x1, &y1);
+        engine_set_clip(x0, y0, x1, y1);
+        tctx.clip_y0 = y0;
+        tctx.clip_y1 = y1;
+    }
+    /* An incomplete texture draws untextured (GL); one that cannot be made
+     * resident skips the draw (out of memory, PRD §8.3). */
+    if (tex && dgl_texture_ready(tex) != 0) {
+        skip_all = 1;
+        tex = NULL;
+    }
+    if ((dgl_gl.dirty & DGL_DIRTY_TEXTURE) || !tex != (textured != 1))
+        dgl_gl.dirty |= DGL_DIRTY_RASTER | DGL_DIRTY_TEXTURE;
+    if (dgl_gl.dirty & (DGL_DIRTY_RASTER | DGL_DIRTY_FOG | DGL_DIRTY_TARGET | DGL_DIRTY_TEXTURE)) {
+        uint32_t white;
+        memset(&tstate, 0, sizeof tstate);
+        textured = 0;
+        asel = ALPHASEL_DIFFUSE;
+        if (tex) {
+            int k;
+            GLenum env = dgl_tex_env_mode();
+            textured = 1;
+            tstate.org = tex->level_off[0];
+            tstate.mip_n = tex->hw_levels > 1 ? tex->hw_levels : 0;
+            for (k = 0; k < tex->hw_levels && k < 5; k++)
+                tstate.mip_org[k] = tex->level_off[k];
+            tstate.w_log2 = tex->hw_w_log2;
+            tstate.h_log2 = tex->hw_h_log2;
+            tex_scale_s = (float)tex->level[0].w / (float)(1 << tex->hw_w_log2);
+            tex_scale_t = (float)tex->level[0].h / (float)(1 << tex->hw_h_log2);
+            tstate.pitch = 1 << tex->hw_w_log2;
+            tstate.hwfmt = (uint32_t)tex->hwfmt;
+            tstate.clamp_u = tex->wrap_s == GL_CLAMP;
+            tstate.clamp_v = tex->wrap_t == GL_CLAMP;
+            tstate.modulate = env == GL_MODULATE;
+            tstate.bilinear = tex->mag_filter == GL_LINEAR || tex->min_filter == GL_LINEAR ||
+                              tex->min_filter == GL_LINEAR_MIPMAP_NEAREST || tex->min_filter == GL_LINEAR_MIPMAP_LINEAR;
+            tstate.trilinear = tstate.mip_n > 1 && (tex->min_filter == GL_NEAREST_MIPMAP_LINEAR ||
+                                                    tex->min_filter == GL_LINEAR_MIPMAP_LINEAR);
+            asel = env == GL_MODULATE ? ALPHASEL_MODULATED : ALPHASEL_TEXTURE;
+        } else if (dgl_gl.fog && dgl_white_texture(&white) == 0) {
+            /* The engine fogs only textured trapezoids (in 86Box, and on the
+             * G100): untextured fogged draws sample a white texel. */
+            textured = 2;
+            tex_scale_s = tex_scale_t = 1;
+            tstate.org = white;
+            tstate.w_log2 = tstate.h_log2 = 3;
+            tstate.pitch = 8;
+            tstate.hwfmt = DGL_TW16;
+            tstate.modulate = 1;
+        }
+        tctx.dwgctl = (textured ? DWG_OPCOD_TEXTURE_TRAP : DWG_OPCOD_TRAP) | zmode | DWG_BOP_COPY |
+                      ((depth && dgl_gl.depth_mask) ? DWG_ATYPE_ZI : DWG_ATYPE_I);
+        tctx.flags = MGA_S_COLOR | (depth ? MGA_S_Z : 0) | (textured ? MGA_S_TEX : 0);
+        tctx.tex_tw = tstate.w_log2;
+        tctx.tex_th = tstate.h_log2;
+        if (textured)
+            tex_emit(&tstate);
+        if (mga.has_alpha_blend) {
+            alphactrl = ALPHACTRL_ALPHASEL(asel);
+            if (dgl_gl.blend)
+                alphactrl |= ALPHACTRL_SRC(src_factor(dgl_gl.blend_src)) | ALPHACTRL_DST(dst_factor(dgl_gl.blend_dst));
+            else
+                alphactrl |= ALPHACTRL_SRC(BLEND_ONE) | ALPHACTRL_DST(BLEND_ZERO);
+            if (dgl_gl.alpha_test && dgl_gl.alpha_func != GL_ALWAYS && mga.has_alpha_test)
+                alphactrl |= ALPHACTRL_ATEN | ALPHACTRL_ATMODE(atmode_for(dgl_gl.alpha_func)) |
+                             ALPHACTRL_ATREF((uint32_t)lrintf(dgl_gl.alpha_ref * 255.0f));
+        } else {
+            /* G100 (development only): stipple is its only blend (PRD D13). */
+            alphactrl = ALPHACTRL_G100_FIXED | ALPHACTRL_ALPHASEL(asel) |
+                        (dgl_gl.blend ? ALPHACTRL_ASTIPPLE : 0);
+        }
+        if (dgl_gl.blend || dgl_gl.alpha_test)
+            tctx.flags |= MGA_S_ALPHA;
+        if (dgl_gl.fog && textured)
+            tctx.flags |= MGA_S_FOG;
+        engine_set_maccess_flags(((tctx.flags & MGA_S_FOG) ? MACCESS_FOGEN : 0) |
+                                 (dgl_gl.dither ? 0 : MACCESS_NODITHER));
+        fifo_reserve(3);
+        MGA_WR32(MGAREG_ALPHACTRL, alphactrl);
+        MGA_WR32(MGAREG_PLNWT, plnwt_for());
+        MGA_WR32(MGAREG_FOGCOL, ((uint32_t)lrintf(dgl_gl.fog_color[0] * 255.0f) << 16) |
+                                ((uint32_t)lrintf(dgl_gl.fog_color[1] * 255.0f) << 8) |
+                                (uint32_t)lrintf(dgl_gl.fog_color[2] * 255.0f));
+    }
+    dgl_gl.dirty &= ~(DGL_DIRTY_RASTER | DGL_DIRTY_FOG | DGL_DIRTY_TARGET | DGL_DIRTY_TEXTURE);
+    /* Guard band: keep screen coordinates inside +-2048 (the setup's range). */
+    {
+        float hw = dgl_gl.viewport[2] * 0.5f, hh = dgl_gl.viewport[3] * 0.5f;
+        guard_x = hw > 0 ? (2000.0f - fabsf(dgl_gl.viewport[0] + hw)) / hw : 1.0f;
+        guard_y = hh > 0 ? (2000.0f - fabsf(dgl_gl.viewport[1] + hh)) / hh : 1.0f;
+        if (guard_x < 1.0f) guard_x = 1.0f;
+        if (guard_y < 1.0f) guard_y = 1.0f;
+    }
+}
+
+static int emit_begin(void)
+{
+    validate();
+    return !skip_all;
+}
+
+/* ---- Projection -------------------------------------------------------- */
+static float fog_factor(float d)
+{
+    float f;
+    switch (dgl_gl.fog_mode) {
+    case GL_LINEAR:
+        f = dgl_gl.fog_end != dgl_gl.fog_start ? (dgl_gl.fog_end - d) / (dgl_gl.fog_end - dgl_gl.fog_start) : 1.0f;
+        break;
+    case GL_EXP:
+        f = expf(-dgl_gl.fog_density * d);
+        break;
+    default:
+        f = expf(-(dgl_gl.fog_density * d) * (dgl_gl.fog_density * d));
+        break;
+    }
+    return f < 0 ? 0 : f > 1 ? 1 : f;
+}
+
+typedef struct { double x, y; mga_svtx v; } proj;
+
+static void project(const dgl_cvtx *c, proj *p)
+{
+    double iw = 1.0 / c->w;
+    double xw = dgl_gl.viewport[0] + (c->x * iw + 1.0) * 0.5 * dgl_gl.viewport[2];
+    double yw = dgl_gl.viewport[1] + (c->y * iw + 1.0) * 0.5 * dgl_gl.viewport[3];
+    double zw = dgl_gl.depth_near + (c->z * iw + 1.0) * 0.5 * (dgl_gl.depth_far - dgl_gl.depth_near);
+    p->x = xw;
+    p->y = dgl_ctx.height - yw;                 /* screen rows go down */
+    memset(&p->v, 0, sizeof p->v);
+    p->v.X16 = (int32_t)lrint(p->x * 16.0);
+    p->v.Y16 = (int32_t)lrint(p->y * 16.0);
+    p->v.z = zw < 0 ? 0 : zw > 1 ? 65535.0 : zw * 65535.0;
+    p->v.r = c->r * 255.0f; p->v.g = c->g * 255.0f; p->v.b = c->b * 255.0f; p->v.a = c->a * 255.0f;
+    p->v.fog = dgl_gl.fog ? 255.0f * fog_factor(c->eye_d) : 255.0f;
+    /* Texture coordinates for the setup: normalised s, t times q = 1/w. */
+    p->v.q = (float)iw;
+    p->v.s = (float)(c->s * tex_scale_s * iw);
+    p->v.t = (float)(c->t * tex_scale_t * iw);
+}
+
+static void clamp_colour(mga_svtx *v)
+{
+#define C(f) if (v->f < 0) v->f = 0; else if (v->f > 255) v->f = 255
+    C(r); C(g); C(b); C(a);
+#undef C
+}
+
+static void draw_projected(const proj *p0, const proj *p1, const proj *p2)
+{
+    mga_svtx a = p0->v, b = p1->v, c = p2->v;
+    clamp_colour(&a); clamp_colour(&b); clamp_colour(&c);
+    if (textured)
+        tex_adjust_coords(&a, &b, &c, &tstate);
+    setup_triangle(&a, &b, &c, &tctx);
+}
+
+/* ---- Fog subdivision -------------------------------------------------------
+ * The fog factor is iterated linearly across the screen, while GL's varies
+ * with eye distance (perspective-correct, and exponentially for EXP/EXP2).
+ * Where it changes by more than FOG_SPLIT levels over a sizeable triangle,
+ * the triangle is split at its clip-space edge midpoints, which puts exact
+ * per-vertex fog at the new corners. */
+#define FOG_SPLIT 12.0f
+#define FOG_SPLIT_DEPTH 4
+
+static void mid(dgl_cvtx *o, const dgl_cvtx *a, const dgl_cvtx *b)
+{
+#define M(f) o->f = 0.5f * (a->f + b->f)
+    M(x); M(y); M(z); M(w); M(r); M(g); M(b); M(a); M(s); M(t); M(eye_d);
+#undef M
+}
+
+static void fog_split(const dgl_cvtx *c0, const dgl_cvtx *c1, const dgl_cvtx *c2,
+                      const proj *p0, const proj *p1, const proj *p2, int depth)
+{
+    float lo = p0->v.fog, hi = p0->v.fog;
+    double area;
+    dgl_cvtx m01, m12, m20;
+    proj q01, q12, q20;
+    if (p1->v.fog < lo) lo = p1->v.fog;
+    if (p1->v.fog > hi) hi = p1->v.fog;
+    if (p2->v.fog < lo) lo = p2->v.fog;
+    if (p2->v.fog > hi) hi = p2->v.fog;
+    area = fabs((p1->x - p0->x) * (p2->y - p0->y) - (p2->x - p0->x) * (p1->y - p0->y)) * 0.5;
+    if (depth >= FOG_SPLIT_DEPTH || hi - lo <= FOG_SPLIT || area < 32.0) {
+        draw_projected(p0, p1, p2);
+        return;
+    }
+    mid(&m01, c0, c1); mid(&m12, c1, c2); mid(&m20, c2, c0);
+    project(&m01, &q01); project(&m12, &q12); project(&m20, &q20);
+    fog_split(c0, &m01, &m20, p0, &q01, &q20, depth + 1);
+    fog_split(&m01, c1, &m12, &q01, p1, &q12, depth + 1);
+    fog_split(&m20, &m12, c2, &q20, &q12, p2, depth + 1);
+    fog_split(&m01, &m12, &m20, &q01, &q12, &q20, depth + 1);
+}
+
+/* ---- Triangles ---------------------------------------------------------- */
+static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *c, const dgl_cvtx *prov)
+{
+    dgl_cvtx in[3], out[9];
+    proj p[9];
+    int n, i;
+    int64_t area2;
+    in[0] = *a; in[1] = *b; in[2] = *c;
+    if (dgl_gl.shade_model == GL_FLAT)
+        for (i = 0; i < 3; i++) {
+            in[i].r = prov->r; in[i].g = prov->g; in[i].b = prov->b; in[i].a = prov->a;
+        }
+    n = dgl_clip_polygon(in, 3, out, guard_x, guard_y);
+    if (n < 3)
+        return;
+    for (i = 0; i < n; i++)
+        project(&out[i], &p[i]);
+    /* Cull on the (unclipped-equivalent) winding of the first three screen
+     * vertices; y runs down on screen, so GL's counter-clockwise is area < 0. */
+    area2 = (int64_t)(p[1].v.X16 - p[0].v.X16) * (p[2].v.Y16 - p[0].v.Y16) -
+            (int64_t)(p[2].v.X16 - p[0].v.X16) * (p[1].v.Y16 - p[0].v.Y16);
+    if (area2 == 0)
+        return;
+    if (dgl_gl.cull_face) {
+        int front = (dgl_gl.front_face == GL_CCW) ? area2 < 0 : area2 > 0;
+        if (dgl_gl.cull_mode == GL_FRONT_AND_BACK || (dgl_gl.cull_mode == GL_BACK) != front)
+            return;
+    }
+    for (i = 1; i + 1 < n; i++) {
+        if (dgl_gl.fog)
+            fog_split(&out[0], &out[i], &out[i + 1], &p[0], &p[i], &p[i + 1], 0);
+        else
+            draw_projected(&p[0], &p[i], &p[i + 1]);
+    }
+}
+
+/* ---- Lines and points: one-pixel screen-space quads (PRD §7) ------------ */
+static void quad(proj *a, proj *b, double ox, double oy)
+{
+    proj q[4];
+    q[0] = *a; q[1] = *b; q[2] = *b; q[3] = *a;
+    q[0].x -= ox; q[0].y -= oy; q[1].x -= ox; q[1].y -= oy;
+    q[2].x += ox; q[2].y += oy; q[3].x += ox; q[3].y += oy;
+    {
+        int i;
+        for (i = 0; i < 4; i++) {
+            q[i].v.X16 = (int32_t)lrint(q[i].x * 16.0);
+            q[i].v.Y16 = (int32_t)lrint(q[i].y * 16.0);
+        }
+    }
+    draw_projected(&q[0], &q[1], &q[2]);
+    draw_projected(&q[0], &q[2], &q[3]);
+}
+
+static void emit_line(const dgl_cvtx *a, const dgl_cvtx *b)
+{
+    dgl_cvtx in[3], out[9];
+    proj p0, p1;
+    int n;
+    double dx, dy;
+    /* Clip the segment as a degenerate triangle, keep the first two outputs. */
+    in[0] = *a; in[1] = *b; in[2] = *b;
+    if (dgl_gl.shade_model == GL_FLAT) {
+        in[0].r = b->r; in[0].g = b->g; in[0].b = b->b; in[0].a = b->a;
+    }
+    n = dgl_clip_polygon(in, 3, out, guard_x, guard_y);
+    if (n < 2)
+        return;
+    project(&out[0], &p0);
+    project(&out[1], &p1);
+    dx = p1.x - p0.x; dy = p1.y - p0.y;
+    if (fabs(dx) >= fabs(dy))
+        quad(&p0, &p1, 0.0, 0.5);             /* x-major: widen vertically */
+    else
+        quad(&p0, &p1, 0.5, 0.0);
+}
+
+static void emit_point(const dgl_cvtx *a)
+{
+    proj p, q;
+    if (dgl_outcode(a, guard_x, guard_y))
+        return;
+    project(a, &p);
+    p.x -= 0.5;
+    q = p;
+    q.x += 1.0;
+    quad(&p, &q, 0.0, 0.5);
+}
+
+static void emit_end(void) { }
+
+void dgl_emit_install(void)
+{
+    dgl_sink.begin = emit_begin;
+    dgl_sink.triangle = emit_triangle;
+    dgl_sink.line = emit_line;
+    dgl_sink.point = emit_point;
+    dgl_sink.end = emit_end;
+}
+
+/* ---- Clears -------------------------------------------------------------- */
+void APIENTRY glClear(GLbitfield mask)
+{
+    int x0, y0, x1, y1;
+    if (mask & ~(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT | 0x200u /* accum */)) {
+        dgl_gl_error(GL_INVALID_VALUE);
+        return;
+    }
+    if (!dgl_ctx.active)
+        return;
+    scissor_rows(&x0, &y0, &x1, &y1);
+    engine_set_clip(x0, y0, x1, y1);
+    /* Clears are engine fills: no blending or fog; the colour mask applies. */
+    engine_set_maccess_flags(0);
+    fifo_reserve(2);
+    MGA_WR32(MGAREG_ALPHACTRL, mga.has_alpha_blend ? ALPHACTRL_SRC(BLEND_ONE) | ALPHACTRL_DST(BLEND_ZERO)
+                                                   : ALPHACTRL_G100_FIXED);
+    MGA_WR32(MGAREG_PLNWT, plnwt_for());
+    if (mask & GL_COLOR_BUFFER_BIT) {
+        uint32_t r = (uint32_t)lrintf(dgl_gl.clear_color[0] * 31.0f);
+        uint32_t g = (uint32_t)lrintf(dgl_gl.clear_color[1] * 63.0f);
+        uint32_t b = (uint32_t)lrintf(dgl_gl.clear_color[2] * 31.0f);
+        engine_fill(x0, y0, x1 - x0, y1 - y0, (r << 11) | (g << 5) | b);
+    }
+    if ((mask & GL_DEPTH_BUFFER_BIT) && dgl_ctx.z_off && dgl_gl.depth_mask) {
+        fifo_reserve(1);
+        MGA_WR32(MGAREG_PLNWT, 0xFFFFFFFFu);
+        engine_fill_depth(x0, y0, x1 - x0, y1 - y0, (uint32_t)lrint(dgl_gl.clear_depth * 65535.0));
+    }
+    dgl_gl.dirty |= DGL_DIRTY_RASTER | DGL_DIRTY_TARGET;
+}
+
+void APIENTRY glFlush(void) { }
+
+void APIENTRY glFinish(void)
+{
+    if (dgl_ctx.active)
+        engine_sync(500000);
+}

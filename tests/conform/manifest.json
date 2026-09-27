@@ -1,0 +1,8 @@
+{
+ "_comment": "Per-frame comparison settings for tools/conform/run.py. tol: per-channel difference after RGB565 quantisation; frac: fraction of pixels allowed beyond it; edge: ignore colour edges of the reference (1 px). The references come from Mesa OSMesa (RGBA8, undithered); DOS-GL draws RGB565 with the chip's dither.",
+ "_default": {
+  "tol": 24,
+  "frac": 0.005,
+  "edge": true
+ }
+}

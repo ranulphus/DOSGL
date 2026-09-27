@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Run a command inside the MGA-Glide dev container with the repo, the
+# toolchains and the cache mounted at identical paths.
+# Inside the container (or when MGA_NO_DOCKER=1) it just runs the command.
+# MGA_DOCKER_NETWORK=host shares the host's network (the Loop B dry run:
+# the emulated PC's SLiRP traffic must reach tools/bench/run.py on the host).
+set -euo pipefail
+if [ -f /.dockerenv ] || [ "${MGA_NO_DOCKER:-0}" = 1 ]; then exec "$@"; fi
+repo=$(cd "$(dirname "$0")/.." && pwd)
+img=mga-glide-dev:$(cat "$repo/tools/docker/Dockerfile" "$repo/tools/docker/packages.txt" | sha256sum | cut -c1-12)
+if ! docker image inspect "$img" >/dev/null 2>&1; then
+  docker build -q -t "$img" "$repo/tools/docker" >&2
+fi
+opt=${MGA_OPT:-$HOME/.local/opt}; cache=${MGA_CACHE:-$HOME/.cache/mga-glide}
+# A project that vendors this harness (DOS-GL: third_party/mgahal) runs it
+# from its own tree: mount the caller's repository as well.
+caller=$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)
+extra=()
+if [ -n "$caller" ] && [ "$caller" != "$repo" ]; then extra=(-v "$caller:$caller"); fi
+mkdir -p "$opt" "$cache"
+tty=(); [ -t 0 ] && [ -t 1 ] && tty=(-it)
+envs=()
+while IFS='=' read -r k _; do
+  case $k in BOX86_*|LOOPA_*|VOODOO_*|MGA_*|FIXTURES_DIR|REF_OVL|GAMES_DIR|WATCOM|DJGPP_PREFIX) envs+=(-e "$k");; esac
+done < <(env)
+exec docker run --rm "${tty[@]}" --init \
+  -u "$(id -u):$(id -g)" -e HOME="$HOME" -e MGA_CACHE="$cache" "${envs[@]}" \
+  -v "$repo:$repo" -v "$opt:$opt" -v "$cache:$cache" "${extra[@]}" \
+  ${MGA_GAMES_DIR:+-v "$MGA_GAMES_DIR:$MGA_GAMES_DIR:ro"} \
+  ${MGA_DOCKER_NETWORK:+--network "$MGA_DOCKER_NETWORK"} \
+  -w "$PWD" "$img" "$@"

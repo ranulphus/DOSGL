@@ -1,0 +1,8 @@
+/build/
+/out/
+/config.local.mk
+__pycache__/
+*.pyc
+/third_party/mgahal/build/
+/third_party/mgahal/out/
+/third_party/mgahal/dist/
