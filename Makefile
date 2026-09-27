@@ -35,6 +35,14 @@ build/djgpp/%.o: %.c
 	$(Q)$(DJCC) $(DJ_CFLAGS) -MMD -c -o $@ $<
 -include $(shell find build/djgpp -name '*.d' 2>/dev/null)
 
+# The version string carries the build ID: rebuild it whenever the ID changes
+# (a new commit, or the tree turning dirty or clean), not only when the source does.
+build/build_id: FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(BUILD_ID)' | cmp -s - $@ || echo '$(BUILD_ID)' > $@
+build/djgpp/src/dgl/version.o: build/build_id
+.PHONY: FORCE
+
 $(LIB): $(DGL_SRCS:%.c=build/djgpp/%.o) $(HAL_SRCS:%.c=build/djgpp/%.o)
 	@mkdir -p $(dir $@)
 	$(Q)echo "  AR      $@"
