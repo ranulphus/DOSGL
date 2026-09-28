@@ -1,7 +1,7 @@
 b95fdd062dbe9bdb197937afed9e7bcb36bbe859714461ba491d2d5398061ba9  ./LICENSE
 2fdef5093ee21546c8ae7ce043067c6ed1de98bd30fb280b092f52c07086e2c7  ./Makefile
-5117e1dd482b67fd8fea423a494a959cd3aebac162941185686fb85d6095253f  ./README.md
-71aea41daf79b126e9555a3dda91d274e92c52d77b9587ddbb7f9b9f53e6e2ba  ./VERSION
+70639b3f9b9ff93b37376de2652817ec62fc00d96146450f93c32b81d7491b68  ./README.md
+7cf5066e4cbef1d0750b3adbe9e7558651e74dcc83fb89790986e231b5166b17  ./VERSION
 75538fd7900ff86a51021720f7642cb51dcaf7afafb100a7a193983fd146ba82  ./docs/bench.md
 5694d6660f30a56dac9f773f0ae838383c3b988635d345c20494f4bb1a5c0203  ./docs/emulated-g200.md
 a322c63616b22b6c8b5cce08a818153cbde5d9f24ba46830ae96f30f9670eaf8  ./docs/emulated-g400.md
@@ -46,7 +46,7 @@ fb22e3f3c8fd640e082130ac158b18ee9363b6debeecced570744d2c82ede909  ./tests/unit/r
 5f257ee65689a457b39a921e3d8dde392cf5fd05df3f02557e624ad5d04131e4  ./tests/unit/unit.h
 055661ee31077c5312237f73a5909c434fcbdd30c816af90d0856a7c51ab8716  ./tools/86box/build.sh
 1293c23a0657cde08df13aeaf685daa6a7923d6028084fe668beb546c1a9ce41  ./tools/86box/mkwinkit.sh
-54dda57ffc47e54a201d198dc5c9f1f2e4fcf1bebc53eb0c5d8350031da1e616  ./tools/86box/mkwinvm.py
+f7f4f5980735cd99e9c90d704c58bad32689759b0852b78b653a6e7a0f901569  ./tools/86box/mkwinvm.py
 907433d1b1557529e0e2fa1fd29fee91faabcbbefff10d96bc61e2d53cc3fc8c  ./tools/86box/patches/local/0001-mga-unsupported-state-warns.patch
 5ab32edcbaa46d9618ef9ac69e12f857f9b4573a56a5383d1a5931beb1164ae8  ./tools/86box/patches/local/0002-mga-bilinear-fixes.patch
 e6c1f897c394b508bcec0c5c63b14271142ddcf169ab81e265e69096759bae85  ./tools/86box/patches/local/0003-mga-16bpp-palette-index.patch
@@ -58,7 +58,7 @@ b2cfb1dfe75fc39aed48eb3d3bb9ccba9916cbc765debf325d98c0174b3e68ef  ./tools/86box/
 e7ac6a5adc164a0313f60f66ddb49878168cb36679075d96b627bb9dd4ec87c8  ./tools/86box/patches/local/0101-sdl-monitor-key-and-pipe.patch
 cf1147bad0edc1c928c2ce80fe1d886391636cccde293115f5a6d583798dd982  ./tools/86box/patches/local/0102-unittester-clean-exit-and-serial-flush.patch
 c900b02dc1a4a0773eb5cd209e8a4e897ec1212d1304d32fd8f9b1f3b5b7710a  ./tools/86box/series
-c814a137473716051fb936014d55b50b99e595a2fe9007f73cfac6a65f5b793f  ./tools/86box/windows/README.md
+b4596393bf2657075beaf7297bce0985acb01d683ecaefebbcbbceb67c3c846f  ./tools/86box/windows/README.md
 d859974028067b00d8308463d1132ed2b8af8b3c4642a16f12062d09541c7b91  ./tools/86box/windows/build-windows.sh
 25ab96ebf830daf6a9ac0e2cefe57fdd264d6a28f3792cd99ecf023696430f85  ./tools/bench/bench.toml
 c37d87fe1d01f17fa8e27a843864866a77a0fbb903b7147f6be27d35620d6e50  ./tools/bench/capture.py
