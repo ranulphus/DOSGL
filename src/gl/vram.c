@@ -1,7 +1,12 @@
 /* vram.c - the texture heap in the VRAM left after the colour and depth
  * buffers (PRD FR-HAL-4, §8.3): first fit, blocks coalesced on free, 32-byte
  * granularity (TEXORG's alignment). Small text textures come and go all the
- * time in ClassiCube, so fragmentation is the risk this keeps down. */
+ * time in ClassiCube, so fragmentation is the risk this keeps down.
+ *
+ * A block that queued draws may still read is retired rather than freed:
+ * it goes back to the heap only after the next completed engine sync
+ * (dgl_vram_sync_done), so a new upload can never overwrite texels the
+ * engine has yet to fetch. */
 #include "gl_tex.h"
 #include <stdlib.h>
 
@@ -10,15 +15,20 @@
 
 typedef struct { uint32_t off, size; int used; } block;
 
+#define MAX_RETIRED 1024
+
 static block blocks[MAX_BLOCKS];
 static int nblocks;
 static uint32_t heap_used;
+static uint32_t retired[MAX_RETIRED];
+static int nretired;
 
 void dgl_vram_init(uint32_t start, uint32_t end)
 {
     start = (start + GRAIN - 1) & ~(GRAIN - 1);
     nblocks = 0;
     heap_used = 0;
+    nretired = 0;
     if (end > start) {
         blocks[0].off = start;
         blocks[0].size = end - start;
@@ -82,3 +92,19 @@ void dgl_vram_free(uint32_t off)
 }
 
 int dgl_vram_blocks(void) { return nblocks; }
+
+int dgl_vram_retire(uint32_t off)
+{
+    if (nretired == MAX_RETIRED)
+        return -1;
+    retired[nretired++] = off;
+    return 0;
+}
+
+int dgl_vram_retired(void) { return nretired; }
+
+void dgl_vram_sync_done(void)
+{
+    while (nretired)
+        dgl_vram_free(retired[--nretired]);
+}

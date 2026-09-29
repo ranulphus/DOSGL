@@ -151,7 +151,15 @@ int dglInit(const DGLConfig *cfg)
     dgl_gl_reset();
     dgl_gl_error_hook = log_gl_error;
     dgl_gl_set_window(c.width, c.height);
-    dgl_textures_reset(dgl_ctx.heap_off, dgl_ctx.vram_bytes);
+    {
+        /* DGL_TEXHEAP_KB caps the texture heap (tests of eviction, or a
+         * smaller card's memory on a bigger one). */
+        const char *e = getenv("DGL_TEXHEAP_KB");
+        uint32_t end = dgl_ctx.vram_bytes, kb = e ? (uint32_t)strtoul(e, NULL, 10) : 0;
+        if (kb && dgl_ctx.heap_off + kb * 1024u < end)
+            end = dgl_ctx.heap_off + kb * 1024u;
+        dgl_textures_reset(dgl_ctx.heap_off, end);
+    }
     dgl_emit_install();
     DGL_INFO("DGL-INIT %dx%d pitch=%d double=%d depth=%d heap=%lu..%lu", c.width, c.height, dgl_ctx.pitch_px,
              dgl_ctx.double_buffer, dgl_ctx.depth_bits, (unsigned long)dgl_ctx.heap_off,
@@ -186,7 +194,7 @@ void dglSwapBuffers(void)
 #ifdef __DJGPP__
     __djgpp_nearptr_enable();           /* the consumer may have turned near pointers off */
 #endif
-    engine_sync(500000);
+    dgl_sync();                         /* retired texture blocks go back to the heap */
     stats.swaps++;
     stats.frames++;
     stats.triangles = setup_stats.tris;
@@ -202,6 +210,10 @@ void dglSwapBuffers(void)
                         dgl_prims.begins, dgl_prims.skipped, dgl_prims.tris_in, dgl_prims.clipped,
                         dgl_prims.zero_area, dgl_prims.culled);
                 memset(&dgl_prims, 0, sizeof dgl_prims);
+                DGL_ERR("DGL-TEX uploads=%lu kb=%lu sub_fast=%lu sub_full=%lu renames=%lu evictions=%lu syncs=%lu",
+                        dgl_texc.uploads, dgl_texc.upload_bytes >> 10, dgl_texc.sub_fast, dgl_texc.sub_full,
+                        dgl_texc.renames, dgl_texc.evictions, dgl_texc.syncs);
+                memset(&dgl_texc, 0, sizeof dgl_texc);
             }
             stats_t0 = now;
             stats_tris0 = setup_stats.tris;

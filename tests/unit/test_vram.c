@@ -1,5 +1,5 @@
-/* test_vram.c - the texture heap: alignment, first fit, coalescing, and a
- * randomised alloc/free sequence that must never overlap or leak. */
+/* test_vram.c - the texture heap: alignment, first fit, coalescing, retired
+ * blocks, and a randomised alloc/free sequence that must never overlap or leak. */
 #include "unit.h"
 #include "../../src/gl/gl_tex.h"
 #include <stdlib.h>
@@ -17,6 +17,13 @@ void unit_run(void)
     dgl_vram_free(c);
     dgl_vram_free(b);
     CHECK(dgl_vram_blocks() == 1 && dgl_vram_used() == 0);      /* fully coalesced */
+    /* A retired block stays allocated until the engine has synced. */
+    CHECK(dgl_vram_alloc(4000, &a) == 0);
+    CHECK(dgl_vram_retire(a) == 0 && dgl_vram_retired() == 1);
+    CHECK(dgl_vram_alloc(4000, &b) == -1);                     /* still held */
+    dgl_vram_sync_done();
+    CHECK(dgl_vram_retired() == 0 && dgl_vram_alloc(4000, &b) == 0 && b == a);
+    dgl_vram_free(b);
     /* Random churn. */
     srand(7);
     dgl_vram_init(0, 1u << 20);

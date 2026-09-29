@@ -3,6 +3,7 @@
  * double-buffered): RGB565 expanded to 8 bits per channel by bit
  * replication, alpha 255, rows bottom-up as GL numbers them. */
 #include "gl_state.h"
+#include "gl_tex.h"
 #include "../dgl/dgl.h"
 #include <string.h>
 
@@ -22,7 +23,7 @@ void APIENTRY glReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format
         return;
     stride = w * bpp;
     stride = (stride + dgl_gl.pack_align - 1) / dgl_gl.pack_align * dgl_gl.pack_align;
-    engine_sync(500000);                    /* the LFB is not ordered with queued draws */
+    dgl_sync();                             /* the LFB is not ordered with queued draws */
     fb = (const volatile uint16_t *)(mga_fb + dgl_color_off(dgl_ctx.read_front));
     for (j = 0; j < h; j++, row += stride) {
         int sy = dgl_ctx.height - 1 - (y + j);     /* GL row -> screen row */

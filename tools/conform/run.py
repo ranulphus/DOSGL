@@ -34,6 +34,8 @@ def run_dos(test, card, out):
     exe = os.path.join(ROOT, "build", "exe", "conform", test.upper() + ".EXE")
     cmd = [sys.executable, os.path.join(MGAHAL, "tools", "loopa", "run.py"), "--name", "%s-%s" % (card, test),
            "--exe", exe, "--card", card, "--out", out, "--timeout", "240", "--idle", "90"]
+    for line in MANIFEST.get(test, {}).get("pre", []):     # per-test RUN.BAT lines (e.g. SET DGL_...)
+        cmd += ["--pre", line]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return json.load(open(os.path.join(out, "result.json")))
 

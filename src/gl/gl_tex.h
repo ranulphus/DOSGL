@@ -22,6 +22,9 @@ int      dgl_vram_alloc(uint32_t size, uint32_t *off);     /* 0 ok, -1 out of me
 void     dgl_vram_free(uint32_t off);
 uint32_t dgl_vram_used(void);
 int      dgl_vram_blocks(void);
+int      dgl_vram_retire(uint32_t off);   /* free after the next sync; -1 = list full, sync first */
+int      dgl_vram_retired(void);           /* blocks waiting for a sync */
+void     dgl_vram_sync_done(void);         /* the engine is idle: free the retired blocks */
 
 /* texture.c */
 #define DGL_MAX_LEVELS 12
@@ -41,7 +44,24 @@ typedef struct dgl_texture {
     int      resident, dirty, hwfmt, hw_levels;
     uint32_t vram_off, level_off[DGL_MAX_LEVELS], vram_size;
     int      hw_w_log2, hw_h_log2;  /* level 0 as stored (>= 8 texels) */
+    uint32_t drawn;                 /* dgl_sync_epoch + 1 when last drawn, 0 = never */
 } dgl_texture;
+
+/* Engine syncs (texture.c): dgl_sync waits for the engine to go idle and
+ * counts completed syncs in dgl_sync_epoch. A texture drawn since the last
+ * completed sync is busy: queued draws may still read its VRAM copy. */
+extern uint32_t dgl_sync_epoch;
+int  dgl_sync(void);                            /* 0 = idle, -1 = timed out */
+#define dgl_texture_busy(t) ((t)->drawn == dgl_sync_epoch + 1)
+#define dgl_texture_drawn(t) ((t)->drawn = dgl_sync_epoch + 1)
+
+/* Texture traffic, printed and reset by DGL_STATS=2 (DGL-TEX). */
+typedef struct {
+    unsigned long uploads, upload_bytes;    /* whole textures written to VRAM */
+    unsigned long sub_fast, sub_full;       /* glTexSubImage2D: rectangle written / whole re-upload */
+    unsigned long renames, evictions, syncs;
+} dgl_tex_counts;
+extern dgl_tex_counts dgl_texc;
 
 dgl_texture *dgl_bound_texture(void);           /* NULL when none or texture 0 */
 int  dgl_texture_ready(dgl_texture *t);         /* upload if needed; 0 = drawable */

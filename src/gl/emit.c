@@ -117,6 +117,8 @@ static void validate(void)
     if (tex && dgl_texture_ready(tex) != 0) {
         skip_all = 1;
         tex = NULL;
+    } else if (tex) {
+        dgl_texture_drawn(tex);        /* busy until the next completed sync */
     }
     if ((dgl_gl.dirty & DGL_DIRTY_TEXTURE) || !tex != (textured != 1))
         dgl_gl.dirty |= DGL_DIRTY_RASTER | DGL_DIRTY_TEXTURE;
@@ -478,5 +480,5 @@ void APIENTRY glFlush(void) { }
 void APIENTRY glFinish(void)
 {
     if (dgl_ctx.active)
-        engine_sync(500000);
+        dgl_sync();
 }

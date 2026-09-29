@@ -6,8 +6,13 @@
  * hardware copy holds level 0 and, for mipmapped filters, the following
  * levels while they are at least 8x8 (the G200-style window, up to 5
  * levels). Levels smaller than 8 texels are widened to 8 by repetition
- * (wrap) or edge extension (clamp). Uploads go through the LFB after an
- * engine sync, since queued draws may still read the old texels. */
+ * (wrap) or edge extension (clamp). Uploads go through the LFB without
+ * waiting for the engine: a texture drawn since the last engine sync (busy)
+ * is re-uploaded into a new block (rename-on-write) while its old block is
+ * retired until the next sync, and glTexSubImage2D writes just the rectangle
+ * when the texture is not busy and the new texels fit its format. When VRAM
+ * runs out, the least recently drawn textures are evicted (their shadow
+ * copies bring them back). */
 #include "gl_tex.h"
 #include "../dgl/dgl.h"
 #include <stdlib.h>
@@ -23,7 +28,19 @@ static int white_ok;
 static GLenum env_mode = GL_MODULATE;
 static GLfloat env_color[4];            /* GL_TEXTURE_ENV_COLOR */
 
+uint32_t dgl_sync_epoch;
+dgl_tex_counts dgl_texc;
+
 GLenum dgl_tex_env_mode(void) { return env_mode; }
+
+int dgl_sync(void)
+{
+    if (engine_sync(500000) != 0)
+        return -1;
+    dgl_sync_epoch++;
+    dgl_vram_sync_done();
+    return 0;
+}
 GLuint dgl_bound_name(void) { return bound; }
 
 static dgl_texture *get(GLuint name, int create)
@@ -48,9 +65,52 @@ static dgl_texture *get(GLuint name, int create)
 
 static void release_vram(dgl_texture *t)
 {
-    if (t->resident) {
+    if (!t->resident)
+        return;
+    if (!dgl_texture_busy(t))
         dgl_vram_free(t->vram_off);
-        t->resident = 0;
+    else if (dgl_vram_retire(t->vram_off) != 0) {   /* retire list full */
+        dgl_texc.syncs++;
+        dgl_sync();
+        dgl_vram_free(t->vram_off);
+    }
+    t->resident = 0;
+}
+
+/* A block for t: from the free heap, then after a sync (retired blocks come
+ * back, busy textures become evictable), then by evicting the least
+ * recently drawn textures that are not busy. */
+static int alloc_vram(const dgl_texture *self, uint32_t size, uint32_t *off)
+{
+    int synced = 0;
+    for (;;) {
+        dgl_texture *lru = NULL;
+        GLuint i;
+        if (dgl_vram_alloc(size, off) == 0)
+            return 0;
+        if (!synced && dgl_vram_retired()) {
+            synced = 1;
+            dgl_texc.syncs++;
+            if (dgl_sync() == 0)
+                continue;
+        }
+        for (i = 0; i < MAX_TEXTURES; i++) {
+            dgl_texture *c = tex[i];
+            if (c && c != self && c->resident && !dgl_texture_busy(c) && (!lru || c->drawn < lru->drawn))
+                lru = c;
+        }
+        if (!lru) {
+            if (synced)
+                return -1;
+            synced = 1;
+            dgl_texc.syncs++;
+            if (dgl_sync() != 0)
+                return -1;
+            continue;
+        }
+        release_vram(lru);
+        lru->dirty = 1;
+        dgl_texc.evictions++;
     }
 }
 
@@ -387,6 +447,36 @@ void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat, GLs
     dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
 }
 
+/* Write a changed rectangle straight into the hardware copy: only when the
+ * copy is current, not busy, holds this level at its own size (not widened)
+ * and its format can represent the new texels' alpha. Returns 1 if done. */
+static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
+{
+    static const int fits[] = { [DGL_TW16] = DGL_ALPHA_OPAQUE, [DGL_TW15] = DGL_ALPHA_BINARY,
+                                [DGL_TW12] = DGL_ALPHA_GRADIENT };
+    const dgl_level *L = &t->level[level];
+    int hw_w, j, i, cls = DGL_ALPHA_OPAQUE;
+    if (!t->resident || t->dirty || dgl_texture_busy(t) || level >= t->hw_levels ||
+        t->level[0].w < 8 || t->level[0].h < 8)
+        return 0;
+    for (j = 0; j < h && cls <= fits[t->hwfmt]; j++) {
+        int c = dgl_alpha_class(L->rgba + ((size_t)(y + j) * L->w + x) * 4, w);
+        if (c > cls)
+            cls = c;
+    }
+    if (cls > fits[t->hwfmt])
+        return 0;
+    hw_w = L->w;                                  /* level >= 8x8: stored at its own size */
+    for (j = 0; j < h; j++) {
+        volatile uint16_t *dst = (volatile uint16_t *)(mga_fb + t->level_off[level]) + (size_t)(y + j) * hw_w + x;
+        const unsigned char *p = L->rgba + ((size_t)(y + j) * L->w + x) * 4;
+        for (i = 0; i < w; i++, p += 4)
+            dst[i] = dgl_pack_texel(t->hwfmt, p[0], p[1], p[2], p[3]);
+    }
+    dgl_texc.sub_fast++;
+    return 1;
+}
+
 void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format,
                               GLenum type, const GLvoid *pixels)
 {
@@ -402,8 +492,11 @@ void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsi
         return;
     }
     unpack(format, pixels, w, h, L->rgba + ((size_t)y * L->w + x) * 4, L->w * 4);
-    t->dirty = 1;
-    dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
+    if (w && h && !sub_in_place(t, level, x, y, w, h)) {
+        dgl_texc.sub_full++;
+        t->dirty = 1;
+        dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
+    }
 }
 
 /* ---- Residency ------------------------------------------------------------ */
@@ -452,10 +545,13 @@ int dgl_texture_ready(dgl_texture *t)
     hw_h = t->level[0].h < 8 ? 8 : t->level[0].h;
     for (l = 0; l < levels; l++)
         size += (((uint32_t)(hw_w >> l) * (uint32_t)(hw_h >> l) * 2u) + 31u) & ~31u;
-    if (t->resident && t->vram_size != size)
+    if (t->resident && (t->vram_size != size || dgl_texture_busy(t))) {
+        if (dgl_texture_busy(t))
+            dgl_texc.renames++;                      /* queued draws keep reading the old block */
         release_vram(t);
+    }
     if (!t->resident) {
-        if (dgl_vram_alloc(size, &off) != 0) {
+        if (alloc_vram(t, size, &off) != 0) {
             dgl_gl_error(GL_OUT_OF_MEMORY);          /* the draw is skipped (PRD §8.3) */
             return -1;
         }
@@ -463,7 +559,8 @@ int dgl_texture_ready(dgl_texture *t)
         t->vram_size = size;
         t->resident = 1;
     }
-    engine_sync(500000);                             /* queued draws may still read the old texels */
+    dgl_texc.uploads++;
+    dgl_texc.upload_bytes += size;
     t->hwfmt = dgl_hwfmt_for_class(cls);
     t->hw_levels = levels;
     t->hw_w_log2 = log2i(hw_w);

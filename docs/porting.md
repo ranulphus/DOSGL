@@ -44,7 +44,11 @@ dglShutdown();
     Loop A knows a program has finished.
   - `DGL_STATS=1` logs frame and triangle rates once a second (`DGL-STAT`);
     `DGL_STATS=2` adds where primitives went (`DGL-PRIMS`: skipped, clipped
-    away, zero area, culled).
+    away, zero area, culled) and texture traffic (`DGL-TEX`: uploads,
+    sub-image writes in place or as whole re-uploads, renames, evictions,
+    syncs forced by texture memory).
+  - `DGL_TEXHEAP_KB=n` caps the texture heap (to test eviction, or to
+    behave like a card with less memory).
   - The first 16 GL errors are logged as `DGL-GLERR <code> at <address>`
     (the address is inside the GL function that raised it; look it up in
     the program's link map).
@@ -56,6 +60,7 @@ dglShutdown();
 | Colour | RGB565 only, dithered; `GL_ALPHA_BITS` is 0 (destination alpha reads as 1) |
 | API | Every OpenGL 1.1 function links. Those DOS-GL does not implement (evaluators, feedback, selection, pixel maps, lighting state...) are stubs that log `DGL-STUB glName` once, count the call in `DGLStats.stub_calls` and return zero; the list is generated at build time (`build/gen/stubs.c`, from `src/gl/gl11.api`) |
 | Textures | Power-of-two sizes; stored as RGB565, ARGB1555 or ARGB4444 chosen from the texels' alpha; internal format ignored. Textures smaller than 8 texels are widened to 8 |
+| Texture memory | Uploads never wait for the engine: a texture drawn since the last swap is rewritten into a new block (the old one is freed at the next swap), and `glTexSubImage2D` writes just the rectangle when it can. When VRAM runs out, the least recently drawn textures are evicted and re-uploaded from DOS-GL's copies when next used; `GL_OUT_OF_MEMORY` only when one texture cannot fit at all |
 | Texture environment | `GL_MODULATE`, `GL_REPLACE` and `GL_DECAL` (drawn as `GL_REPLACE`); `GL_BLEND` is refused with `GL_INVALID_ENUM`; `GL_TEXTURE_ENV_COLOR` is stored |
 | `GL_CLAMP` | Clamps to the edge texel (as the hardware does), the same as `GL_CLAMP_TO_EDGE`; GL 1.1 would blend edge texels with the border colour under linear filtering. Border colours are stored, never drawn |
 | Mipmaps | Up to 5 levels in a window starting at level 0 (levels at least 8x8); the chip picks the level per pixel and rounds it |
