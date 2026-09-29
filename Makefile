@@ -3,6 +3,7 @@
 #   make                  libGL.a and the examples (DJGPP)
 #   make tests-host       host unit tests (Linux gcc)
 #   make loopa TEST=hello [CARD=g450] [ARGS=--fail]    run an example in 86Box
+#   make quake / loopa-quake GAME=quake2   the Quake ports (tools/quake)
 #   make sync-hal         refresh third_party/mgahal from MGA-Glide
 #   make check-hal        verify the vendored copy against its MANIFEST
 include config.mk
@@ -26,7 +27,7 @@ HAL_SRCS := $(addprefix $(MGAHAL)/hal/,src/debug/serial.c src/pci.c src/chip.c s
 DGL_SRCS := $(wildcard src/dgl/*.c) $(wildcard src/gl/*.c)
 LIB := build/lib/libGL.a
 
-.PHONY: all lib examples tests-host loopa conform conform-dos conform-host classicube loopa-classicube setup-djgpp setup-ow dostools 86box sync-hal check-hal clean help
+.PHONY: all lib examples tests-host loopa conform conform-dos conform-host classicube loopa-classicube quake loopa-quake setup-djgpp setup-ow dostools 86box sync-hal check-hal clean help
 all: lib examples
 
 build/djgpp/%.o: %.c
@@ -105,6 +106,14 @@ loopa-classicube: classicube build/cc/default.zip dostools
 	  --file "build/cc/default.zip=/TEST/TEXPACKS/DEFAULT.ZIP" \
 	  --pre "SET DGL_EXIT_AFTER=$(CC_FRAMES)" --pre "SET DGL_STATS=1" \
 	  --timeout 1500 --idle 300 --shots 60,120,180
+
+# The Quake ports (tools/quake): the pinned forks built against libGL.a, run
+# in 86Box on the owner's game data (tools/quake/fixtures.py; never committed).
+#   make loopa-quake GAME=quake|lq|quake2 [CARD=g450]
+quake: lib
+	tools/quake/build.sh
+loopa-quake: quake dostools
+	tools/quake/run.sh $(GAME) $(CARD)
 
 # Host unit tests.
 HOST_CFLAGS := -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude
