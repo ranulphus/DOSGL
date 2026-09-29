@@ -176,7 +176,7 @@ static void point(GLint a, const dgl_vin *imm)
         dgl_sink.point(&v);
 }
 
-void dgl_assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, const dgl_vin *imm)
+static void assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, const dgl_vin *imm)
 {
     GLsizei i;
 #define I(k) (idx ? idx[k] : first + (k))
@@ -236,6 +236,13 @@ void dgl_assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, con
 #undef I
     if (dgl_sink.end)
         dgl_sink.end();
+}
+
+void dgl_assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, const dgl_vin *imm)
+{
+    DGL_FPU_ENTER();
+    assemble(mode, count, idx, first, imm);
+    DGL_FPU_LEAVE();
 }
 
 static int valid_mode(GLenum mode) { return mode <= GL_POLYGON; }

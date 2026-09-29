@@ -435,15 +435,10 @@ void dgl_emit_install(void)
 }
 
 /* ---- Clears -------------------------------------------------------------- */
-void APIENTRY glClear(GLbitfield mask)
+static void clear(GLbitfield mask)
 {
     int x0, y0, x1, y1;
-    if (mask & ~(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT | 0x200u /* accum */)) {
-        dgl_gl_error(GL_INVALID_VALUE);
-        return;
-    }
-    if (!dgl_ctx.active)
-        return;
+    DGL_FPU_ENTER();
     scissor_rows(&x0, &y0, &x1, &y1);
     engine_set_clip(x0, y0, x1, y1);
     /* Clears are engine fills: no blending or fog; the colour mask applies. */
@@ -464,6 +459,18 @@ void APIENTRY glClear(GLbitfield mask)
         engine_fill_depth(x0, y0, x1 - x0, y1 - y0, (uint32_t)lrint(dgl_gl.clear_depth * 65535.0));
     }
     dgl_gl.dirty |= DGL_DIRTY_RASTER | DGL_DIRTY_TARGET;
+    DGL_FPU_LEAVE();
+}
+
+void APIENTRY glClear(GLbitfield mask)
+{
+    if (mask & ~(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT | 0x200u /* accum */)) {
+        dgl_gl_error(GL_INVALID_VALUE);
+        return;
+    }
+    if (!dgl_ctx.active)
+        return;
+    clear(mask);
 }
 
 void APIENTRY glFlush(void) { }

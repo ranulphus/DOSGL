@@ -86,6 +86,20 @@ void dgl_gl_set_window(int w, int h);
 void dgl_gl_error(GLenum e);                              /* record the first error */
 extern void (*dgl_gl_error_hook)(GLenum e, void *caller); /* context.c logs the first few */
 
+/* The x87 control word inside drawing entry points. Games may run the FPU
+ * at 24-bit precision (Quake 2 does, for its software renderer), where
+ * libm's lrint returns 0 for everything and the setup maths loses bits:
+ * drawing switches to 53-bit, round-to-nearest, exceptions masked (the
+ * HAL's FPU_ENTER) and restores the caller's word. Host builds use SSE. */
+#ifdef MGA_DJGPP
+#  include "mga/fp.h"
+#  define DGL_FPU_ENTER() FPU_ENTER()
+#  define DGL_FPU_LEAVE() FPU_LEAVE()
+#else
+#  define DGL_FPU_ENTER() ((void)0)
+#  define DGL_FPU_LEAVE() ((void)0)
+#endif
+
 /* Where primitives go (DGL_STATS=2 prints them every second as DGL-PRIMS). */
 typedef struct {
     unsigned long begins, skipped;              /* primitives; skipped by validation */

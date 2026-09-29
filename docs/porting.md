@@ -33,6 +33,9 @@ dglShutdown();
 - DOS-GL maps the card with near pointers (`__djgpp_nearptr_enable`). A
   program that turns them off must not call GL until `dglSwapBuffers`
   (which turns them back on) or turn them back on itself.
+- Games may leave the x87 FPU at 24-bit precision or change its rounding
+  (Quake 2 does): drawing calls switch to their own control word and
+  restore the caller's.
 - `dglGetProcAddress(name)` returns any GL 1.1 function and the extension
   functions DOS-GL implements (for programs that bind GL at run time).
 - Test hooks, over COM1:
