@@ -27,6 +27,8 @@ card=g450
 if [ $# -gt 0 ] && [ "$1" != "--" ]; then card=$1; shift; fi
 [ "${1:-}" = "--" ] && shift
 hal=${MGAHAL_DIR:-$root/third_party/mgahal}
+# The DOS helpers Loop A puts in C:\HX (make sync-hal starts the tree afresh).
+[ -f "$hal/build/ow/dos/UTEXIT.COM" ] || make -C "$root" -s dostools
 q=$root/build/quake
 name=${NAME:-$game-gl-$card}
 demos=${MGA_CACHE:-$HOME/.cache/mga-glide}/fixtures/games/q2demos

@@ -45,7 +45,8 @@ dglShutdown();
   - `DGL_STATS=1` logs frame and triangle rates once a second (`DGL-STAT`);
     `DGL_STATS=2` adds where primitives went (`DGL-PRIMS`: skipped, clipped
     away, zero area, culled) and texture traffic (`DGL-TEX`: uploads,
-    sub-image writes in place, in place after waiting for the engine, or as
+    sub-image writes in place by the CPU, in place after waiting for the
+    engine, through the engine (ILOAD), or as
     whole re-uploads, renames, evictions, syncs forced by texture memory,
     palettes loaded into the lookup table).
   - `DGL_VSYNC=0` or `1` overrides the program's choice of swap on retrace.
@@ -59,6 +60,11 @@ dglShutdown();
     G400/G450 only: `DGL_COMBINER=1` draws single textures through the
     texture-stage combiner (as Mesa does) instead of the legacy modulate,
     and `DGL_TC2_EXTRA=8000` (hex) ORs those bits into every TEXCTL2.
+  - `DGL_GUARD_PX=n` (at most 2000, the default) clips triangles whose
+    screen coordinates reach more than n pixels from the viewport's centre.
+    A smaller band clips more, but keeps the edges and texture gradients the
+    setup computes shorter. At 800 no conformance frame changed in 86Box, so
+    this is kept for silicon, where precision may differ.
   - The first 16 GL errors are logged as `DGL-GLERR <code> at <address>`
     (the address is inside the GL function that raised it; look it up in
     the program's link map).
@@ -70,7 +76,7 @@ dglShutdown();
 | Colour | RGB565 only, dithered; `GL_ALPHA_BITS` is 0 (destination alpha reads as 1) |
 | API | Every OpenGL 1.1 function links. Those DOS-GL does not implement (evaluators, feedback, selection, pixel maps, lighting state...) are stubs that log `DGL-STUB glName` once, count the call in `DGLStats.stub_calls` and return zero; the list is generated at build time (`build/gen/stubs.c`, from `src/gl/gl11.api`) |
 | Textures | Power-of-two sizes; stored as RGB565, ARGB1555 or ARGB4444 chosen from the texels' alpha after the internal format has been applied (`GL_RGB` drops alpha, luminance and intensity come from red, `GL_ALPHA` keeps only alpha, `GL_RGB5_A1` never gets ARGB4444; sized formats are otherwise hints). Luminance textures keep exact greys in RGB565. Textures smaller than 8 texels are widened to 8 |
-| Texture memory | Whole uploads never wait for the engine: a texture drawn since the last swap is rewritten into a new block (the old one is freed at the next swap). `glTexSubImage2D` writes just the rectangle when it can, waiting for the engine first if queued draws may still read the texture and the rectangle is at most a quarter of it. When VRAM runs out, the least recently drawn textures are evicted and re-uploaded from DOS-GL's copies when next used; `GL_OUT_OF_MEMORY` only when one texture cannot fit at all |
+| Texture memory | Whole uploads never wait for the engine: a texture drawn since the last swap is rewritten into a new block (the old one is freed at the next swap). `glTexSubImage2D` writes just the rectangle when it can. It goes through the drawing engine (ILOAD), in order with the draws, when the texture level is at least 32 texels wide (64 for 8-bit textures). Otherwise the CPU writes it, first waiting for the engine if queued draws may still read the texture and the rectangle is at most a quarter of it. `DGL_ILOAD=0` makes the CPU write every rectangle. When VRAM runs out, the least recently drawn textures are evicted and re-uploaded from DOS-GL's copies when next used; `GL_OUT_OF_MEMORY` only when one texture cannot fit at all |
 | Texture environment | `GL_MODULATE` and `GL_REPLACE` everywhere. `GL_DECAL`: on RGB textures as `GL_REPLACE`; on textures with alpha a blend by texel alpha (the G400/G450's combiner, the G200's decal blend). `GL_BLEND` with a black environment colour on the G400/G450 (the combiner); with any other colour, or on the G200, it is drawn as `GL_MODULATE` (logged once) |
 | Multitexture | `GL_ARB_multitexture` (and `GL_SGIS_multitexture`'s names) with two units on the G400 and G450, drawn in one pass with the chip's two texture maps and its combiner; each unit has its own binding, environment, texture matrix, current coordinates and client array. The G200 has one unit (`GL_MAX_TEXTURE_UNITS_ARB` is 1) and does not advertise the extensions: programs draw two passes, as GLQuake and Quake 2 do |
 | `GL_CLAMP` | Clamps to the edge texel (as the hardware does), the same as `GL_CLAMP_TO_EDGE`; GL 1.1 would blend edge texels with the border colour under linear filtering. Border colours are stored, never drawn |

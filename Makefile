@@ -90,7 +90,8 @@ build/host/conform/%: $$(wildcard tests/conform/$$*_*.c) tests/conform/ct_host.c
 conform-dos: $(foreach t,$(CONFORM),build/exe/conform/$(shell echo $(t) | tr a-z A-Z).EXE)
 conform-host: $(foreach t,$(CONFORM),build/host/conform/$(t))
 conform: conform-dos dostools
-	$(MGAHAL)/tools/dev sh -c '$(MAKE) conform-host && python3 tools/conform/run.py --card $(CARD) $(TESTS)'
+	$(MGAHAL)/tools/dev sh -c '$(MAKE) conform-host && python3 tools/conform/run.py --card $(CARD) \
+	  $(if $(PRE),--pre "$(PRE)") $(TESTS)'
 
 # ClassiCube (M5): build against libGL.a, and run it in 86Box with the
 # procedural test texture pack (tools/classicube/mkpack.py): singleplayer,

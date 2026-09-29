@@ -4,7 +4,8 @@
 OSMesa, and the frames are compared (RGB565 quantisation, edge masks,
 per-test tolerances from tests/conform/manifest.json).
 
-Runs inside the dev container (make conform CARD=g450 [TESTS="t01 t02"]).
+Runs inside the dev container (make conform CARD=g450 [TESTS="t01 t02"]
+[PRE="SET DGL_GUARD_PX=800"], the last a RUN.BAT line before every test).
 Results: out/conform/<card>/<test>/ (serial.log, frames, diffs, result.json)
 and out/conform/summary-<card>.json. Exit status 0 when every test passes.
 """
@@ -30,11 +31,14 @@ def tests_available():
     return sorted(os.path.basename(p).split("_")[0] for p in glob.glob(os.path.join(ROOT, "tests/conform/t[0-9]*_*.c")))
 
 
+PRE = []                                            # --pre: RUN.BAT lines for every test
+
+
 def run_dos(test, card, out):
     exe = os.path.join(ROOT, "build", "exe", "conform", test.upper() + ".EXE")
     cmd = [sys.executable, os.path.join(MGAHAL, "tools", "loopa", "run.py"), "--name", "%s-%s" % (card, test),
            "--exe", exe, "--card", card, "--out", out, "--timeout", "240", "--idle", "90"]
-    for line in MANIFEST.get(test, {}).get("pre", []):     # per-test RUN.BAT lines (e.g. SET DGL_...)
+    for line in PRE + MANIFEST.get(test, {}).get("pre", []):   # RUN.BAT lines (e.g. SET DGL_...)
         cmd += ["--pre", line]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return json.load(open(os.path.join(out, "result.json")))
@@ -78,7 +82,9 @@ def main():
     ap.add_argument("tests", nargs="*")
     ap.add_argument("--card", default=os.environ.get("CARD", "g450"))
     ap.add_argument("--jobs", type=int, default=int(os.environ.get("LOOPA_JOBS", "4")))
+    ap.add_argument("--pre", action="append", default=[], help="RUN.BAT line before every test (SET DGL_...)")
     a = ap.parse_args()
+    PRE.extend(a.pre)
     tests = a.tests or tests_available()
     with cf.ThreadPoolExecutor(a.jobs) as ex:
         reports = list(ex.map(lambda t: check(t, a.card), tests))

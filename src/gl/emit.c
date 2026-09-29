@@ -35,6 +35,10 @@ static float tex_scale_s1 = 1, tex_scale_t1 = 1;
  * the Linux and X.org drivers always set on the G400). */
 static int force_combiner;
 static uint32_t tc2_extra;
+/* DGL_GUARD_PX: how far from the viewport's centre screen coordinates may
+ * reach before triangles are clipped (default 2000, the setup's range);
+ * smaller clips more but keeps edge and texture gradients shorter. */
+static float guard_px = 2000.0f;
 static int skip_all;                  /* depth or alpha function NEVER, or no context */
 static float tri_offset;              /* glPolygonOffset for the triangle being drawn (depth steps) */
 static float guard_x, guard_y;
@@ -292,8 +296,8 @@ static void validate(void)
     /* Guard band: keep screen coordinates inside +-2048 (the setup's range). */
     {
         float hw = dgl_gl.viewport[2] * 0.5f, hh = dgl_gl.viewport[3] * 0.5f;
-        guard_x = hw > 0 ? (2000.0f - fabsf(dgl_gl.viewport[0] + hw)) / hw : 1.0f;
-        guard_y = hh > 0 ? (2000.0f - fabsf(dgl_gl.viewport[1] + hh)) / hh : 1.0f;
+        guard_x = hw > 0 ? (guard_px - fabsf(dgl_gl.viewport[0] + hw)) / hw : 1.0f;
+        guard_y = hh > 0 ? (guard_px - fabsf(dgl_gl.viewport[1] + hh)) / hh : 1.0f;
         if (guard_x < 1.0f) guard_x = 1.0f;
         if (guard_y < 1.0f) guard_y = 1.0f;
     }
@@ -538,6 +542,8 @@ void dgl_emit_install(void)
     force_combiner = e && *e && *e != '0';
     e = getenv("DGL_TC2_EXTRA");
     tc2_extra = e && *e && mga.has_dual_tex ? (uint32_t)strtoul(e, NULL, 16) : 0;
+    e = getenv("DGL_GUARD_PX");
+    guard_px = e && atoi(e) > 0 && atoi(e) <= 2000 ? (float)atoi(e) : 2000.0f;
     dgl_sink.begin = emit_begin;
     dgl_sink.triangle = emit_triangle;
     dgl_sink.line = emit_line;
