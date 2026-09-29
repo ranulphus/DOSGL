@@ -14,7 +14,8 @@
 # Environment: DEMO, FRAMES (DGL_EXIT_AFTER; default 0 = no limit for
 # timedemos, 600 for the Quake 2 map), STATS (DGL_STATS, default 1), SNAP
 # (DGL_SNAP: frames to capture as out/NAME/files/F*.PPM, the same pictures on
-# every run), SHOTS (screenshot seconds after boot), NAME (result directory
+# every run), PRE (one more RUN.BAT line, e.g. "SET DGL_TEXHEAP_KB=2048"),
+# SHOTS (screenshot seconds after boot), NAME (result directory
 # out/NAME, default GAME-gl-CARD), MGAHAL_DIR (another copy of the harness).
 # Needs build/quake (tools/quake/build.sh) and the fixtures
 # (tools/quake/fixtures.py). Screenshots of retail data stay local.
@@ -32,6 +33,7 @@ demos=${MGA_CACHE:-$HOME/.cache/mga-glide}/fixtures/games/q2demos
 common=(--games-file "$here/games.json" --game "$game" --card "$card" --out "$root/out/$name"
         --pre "SET DGL_STATS=${STATS:-1}" --timeout 3600 --idle 300)
 [ -n "${SNAP:-}" ] && common+=(--pre "SET DGL_SNAP=$SNAP")
+[ -n "${PRE:-}" ] && common+=(--pre "$PRE")
 case $game in
   quake|lq)
     args=${*:-"-nosound -nocdaudio -nolan -width 640 -height 480 -fixedtime -tdresult C:\\OUT\\TD.TXT -tdquit +timedemo ${DEMO:-demo1}"}
