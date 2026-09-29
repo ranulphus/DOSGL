@@ -49,6 +49,10 @@ dglShutdown();
     syncs forced by texture memory).
   - `DGL_TEXHEAP_KB=n` caps the texture heap (to test eviction, or to
     behave like a card with less memory).
+  - `DGL_SNAP=100,250` writes the frames shown by those swaps to
+    `DGL_SNAPDIR` (default `C:\OUT`) as `F00100.PPM`...; a timedemo draws
+    every frame, so these are the same pictures on every card and run.
+    `dglSnapshot(path)` does the same on demand.
   - The first 16 GL errors are logged as `DGL-GLERR <code> at <address>`
     (the address is inside the GL function that raised it; look it up in
     the program's link map).

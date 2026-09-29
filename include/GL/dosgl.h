@@ -63,6 +63,10 @@ const DGLStats *dglGetStats(void);
    extension may be used is still decided by glGetString(GL_EXTENSIONS). (v1.1) */
 void *dglGetProcAddress(const char *name);
 
+/* Write the buffer being drawn (the next frame, when double-buffered) to
+   path as a binary PPM; 0 on success. For tests and bug reports. (v1.1) */
+int dglSnapshot(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

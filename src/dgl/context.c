@@ -143,6 +143,7 @@ int dglInit(const DGLConfig *cfg)
             exit_pending = 1;
             DGL_ERR("DGL-START %dx%d exit_after=%lu", c.width, c.height, exit_after);
         }
+        dgl_snap_init();
         e = getenv("DGL_STATS");
         stats_on = e ? atoi(e) : 0;
         stats_t0 = sys_time_us();
@@ -196,6 +197,7 @@ void dglSwapBuffers(void)
 #endif
     dgl_sync();                         /* retired texture blocks go back to the heap */
     stats.swaps++;
+    dgl_snap_frame(stats.swaps);        /* DGL_SNAP: before the frame is shown */
     stats.frames++;
     stats.triangles = setup_stats.tris;
     stats.stub_calls = dgl_stub_calls;

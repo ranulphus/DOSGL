@@ -33,6 +33,8 @@ int dgl_pitch_for(int width);             /* pixels, engine rules */
 void dgl_crash_install(void);
 void dgl_teardown(void);                  /* reset engine, text mode; safe to call twice */
 void dgl_note_exit(void);                 /* DGL-EXIT if DGL-START was printed */
+void dgl_snap_init(void);                 /* snap.c: read DGL_SNAP, DGL_SNAPDIR */
+void dgl_snap_frame(unsigned long swap);  /* capture if swap is listed */
 
 /* emit.c: install the hardware sinks for the vertex stream. */
 void dgl_emit_install(void);
