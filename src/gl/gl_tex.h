@@ -85,6 +85,7 @@ typedef struct {
     unsigned long uploads, upload_bytes;    /* whole textures written to VRAM */
     unsigned long sub_fast, sub_full;       /* glTexSubImage2D: rectangle written / whole re-upload */
     unsigned long sub_sync;                 /* rectangles written after waiting for the engine */
+    unsigned long sub_iload;                /* rectangles written through the engine (ILOAD) */
     unsigned long lut_loads;                /* palettes loaded into the texture LUT (TW8) */
     unsigned long renames, evictions, syncs;
 } dgl_tex_counts;

@@ -30,7 +30,7 @@ To dry-run without hardware, use the virtual bench PC:
 `MGA_DOCKER_NETWORK=host tools/dev python3 tools/bench/vpc.py start g450` in
 MGA-Glide, then `--pc vbench-g450`.
 
-One job runs G4EXP five times, each under one DOS-GL switch. The tag names
+One job runs G4EXP six times, each under one DOS-GL switch. The tag names
 the run's pictures (`E2C.PPM` is E2 under `DGL_COMBINER=1`):
 
 | Tag | Switch | Runs | For |
@@ -40,6 +40,7 @@ the run's pictures (`E2C.PPM` is E2 under `DGL_COMBINER=1`):
 | T | `DGL_TC2_EXTRA=8000` | E1 E2 E4 E5 E6 | E3 |
 | L | `DGL_TLUT=1` | E5 | E5 on the G400/G450 |
 | S | `DGL_TLUT=0` | E5 | E5 reference |
+| P | `DGL_ILOAD=0` | E6 | E6 with CPU writes |
 
 `DGL_COMBINER` and `DGL_TC2_EXTRA` act only on cards with two texture units.
 E1 and E4 need two units; on the G200 they are skipped.
@@ -47,9 +48,13 @@ E1 and E4 need two units; on the G200 they are skipped.
 ## Emulator baseline (2026-09-29)
 
 Every experiment passes under every switch on the emulated G450, G400 and
-G200. The same job also passes on the virtual bench PC (`vbench-g450`: job
-picked up, five runs, 22 files uploaded), so the bench path is ready. In E3, every T picture is identical to its D picture. E5 uses the LUT
-where expected: in D on the G200, and in L everywhere. The PCI values 86Box
+G200. The job also passed on the virtual bench PC (`vbench-g450`: picked
+up, 22 files uploaded; that was before run P existed), so the bench path is
+ready.
+
+In E3, every T picture is identical to its D picture. E5 uses the LUT where
+expected: in D on the G200, and in L everywhere. E6 writes through the
+engine in D and by the CPU in P. The PCI values 86Box
 reports, for comparison with the cards:
 
 | Card | Device, revision | OPTION (40h) | OPTION2 (50h), OPTION3 (54h) |
@@ -183,28 +188,39 @@ every stripe's colour, and the verdict says which path ran (`tlut` or
 ### E6: texture cache after in-place texel writes (all cards)
 
 DOS-GL writes a `glTexSubImage2D` rectangle straight into the texture's VRAM
-when it can (`sub_in_place` in `src/gl/texture.c`). If the texture was drawn
-since the last sync, it waits for the engine first. 86Box has no texture
-cache. On silicon, stale texels could survive a write.
+when it can (`sub_in_place` in `src/gl/texture.c`). There are two paths:
+
+- **D:** through the drawing engine (ILOAD), queued in order with the draws.
+  This is the default where the level is wide enough.
+- **P:** `DGL_ILOAD=0`, written by the CPU through the framebuffer. If the
+  texture was drawn since the last sync, DOS-GL waits for the engine first.
+
+86Box has no texture cache. On silicon, stale texels could survive either
+kind of write.
 
 The texture is first drawn red. Then:
 
 | Step | Write | Then | Expect |
 |---|---|---|---|
 | a | `glFinish`; whole texture green | drawn with no register change | green |
-| b | at once, an 8x8 corner blue (after a sync) | drawn with no register change | blue corner |
+| b | at once, an 8x8 corner blue (P: after a sync) | drawn with no register change | blue corner |
 | c | another texture drawn; corner yellow | drawn (TEXORG rewritten) | yellow corner |
 
 The verdict counts stale samples per step (1024 samples per quad; 16 in the
-corner). It also reports how the writes went: "in place 3 (after sync 2),
-re-uploaded 0". Any other split means the path was not exercised, so the
-result is inconclusive.
+corner). It also reports how the writes went:
+
+- D: "engine 3, cpu 0 (after sync 0), re-uploaded 0";
+- P: "engine 0, cpu 3 (after sync 2), re-uploaded 0".
+
+Any other split means the path was not exercised, so the result is
+inconclusive.
 
 | Outcome | Change |
 |---|---|
 | all clean | nothing |
+| D clean, P stale | keep ILOAD; send the CPU path's rectangles through a re-upload instead |
 | a or b stale, c clean | a TEXORG write refreshes the cache: after an in-place write, mark the texture state dirty so validate re-emits it |
-| c stale too | the cache survives register writes: drop in-place writes (always re-upload), or find a flush |
+| c stale too | the cache survives register writes: drop that path's in-place writes (always re-upload), or find a flush |
 
 ### E7: identity (all cards)
 

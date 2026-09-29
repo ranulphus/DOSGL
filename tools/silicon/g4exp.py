@@ -14,6 +14,7 @@ One job runs G4EXP.EXE several times, each under one DOS-GL switch:
   T  DGL_TC2_EXTRA=8000  TEXCTL2 bit 15 on every draw (E3: pictures compared with D)
   L  DGL_TLUT=1          paletted textures through the LUT, also on the G400 (E5)
   S  DGL_TLUT=0          paletted textures expanded in software (E5 reference)
+  P  DGL_ILOAD=0         sub-images written by the CPU, not the engine (E6)
 
 A PASS says the card does what DOS-GL assumes. The bench job itself passes
 only if every run does, so on silicon a FAIL job is an answer, not an error.
@@ -32,7 +33,7 @@ MGA = os.environ.get("MGA_GLIDE", os.path.expanduser("~/MGA-Glide"))
 EXE = os.path.join(ROOT, "build", "exe", "G4EXP.EXE")
 
 VARIANTS = [("D", None, "124567"), ("C", "DGL_COMBINER=1", "1246"), ("T", "DGL_TC2_EXTRA=8000", "12456"),
-            ("L", "DGL_TLUT=1", "5"), ("S", "DGL_TLUT=0", "5")]
+            ("L", "DGL_TLUT=1", "5"), ("S", "DGL_TLUT=0", "5"), ("P", "DGL_ILOAD=0", "6")]
 
 
 def commands():
@@ -47,6 +48,8 @@ def commands():
 
 
 def cmd_loopa(a):
+    if not os.path.exists(os.path.join(HAL, "build", "ow", "dos", "UTEXIT.COM")):
+        subprocess.run(["make", "-C", ROOT, "-s", "dostools"], check=True)   # C:\HX helpers
     def one(card):
         out = os.path.join(ROOT, "out", "g4exp-" + card)
         cmd = [os.path.join(HAL, "tools", "dev"), "python3", os.path.join(HAL, "tools", "loopa", "run.py"),

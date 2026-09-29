@@ -11,7 +11,7 @@
  *   E3 TEXCTL2 bit 15                    (the whole run under DGL_TC2_EXTRA)
  *   E4 leaving dual texturing            (two texture units only)
  *   E5 paletted textures (TLUT or expanded)
- *   E6 texture cache after in-place texel writes
+ *   E6 texture cache after in-place texel writes (engine or CPU)
  *   E7 identity: PCI config space, revision, OPTION registers
  *
  * Uses DOS-GL internals for the counters and config space, as probe does. */
@@ -391,11 +391,12 @@ static void e5(void)
 
 /* ---- E6: texture cache after in-place texel writes ----------------------
  * DOS-GL writes glTexSubImage2D rectangles straight into the texture's VRAM
- * when it can (texture.c sub_in_place). The engine may cache texels:
- *   a) red texture drawn, glFinish, whole texture rewritten green through
- *      the framebuffer, drawn again with no register change: expect green;
- *   b) drawn again and at once an 8x8 corner rewritten blue (DOS-GL waits
- *      for the engine first), drawn: expect a blue corner;
+ * when it can (texture.c sub_in_place): through the engine (ILOAD) by
+ * default, by the CPU under DGL_ILOAD=0. The engine may cache texels:
+ *   a) red texture drawn, glFinish, whole texture rewritten green, drawn
+ *      again with no register change: expect green;
+ *   b) drawn again and at once an 8x8 corner rewritten blue (the CPU path
+ *      waits for the engine first), drawn: expect a blue corner;
  *   c) as b with yellow, but another texture drawn in between (TEXORG is
  *      rewritten): if only c is right, a register write clears the cache.
  * The HX-STAT line shows which write path each step took. */
@@ -408,8 +409,8 @@ static int e6_step(float x, int corner, rgba want_corner, rgba want_rest, const 
             int in_corner = corner && i < 16 && j < 16;
             stale += !is(p, in_corner ? want_corner : want_rest);
         }
-    hx_log("HX-STAT g4exp %s tag=%s stale=%d of 1024 fast=%lu sync=%lu full=%lu", name, tag, stale,
-           dgl_texc.sub_fast, dgl_texc.sub_sync, dgl_texc.sub_full);
+    hx_log("HX-STAT g4exp %s tag=%s stale=%d of 1024 iload=%lu cpu=%lu sync=%lu full=%lu", name, tag, stale,
+           dgl_texc.sub_iload, dgl_texc.sub_fast, dgl_texc.sub_sync, dgl_texc.sub_full);
     return stale;
 }
 
@@ -418,13 +419,14 @@ static void e6(void)
     static const rgba YELLOW = { 255, 255, 0, 255 };
     static unsigned char buf[TS * TS * 4];
     GLuint t = tex_solid(RED), other = tex_solid(WHITE);
-    unsigned long fast0, sync0, full0;
+    unsigned long iload0, fast0, sync0, full0;
     int sa, sb, sc;
     begin();
     unit(0, t, GL_REPLACE);
     quad(16, 64, 144, 192, 1, 0);               /* red, loads the cache */
     glFinish();
-    fast0 = dgl_texc.sub_fast; sync0 = dgl_texc.sub_sync; full0 = dgl_texc.sub_full;
+    iload0 = dgl_texc.sub_iload; fast0 = dgl_texc.sub_fast; sync0 = dgl_texc.sub_sync;
+    full0 = dgl_texc.sub_full;
     fill(buf, TS * TS, GREEN);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TS, TS, GL_RGBA, GL_UNSIGNED_BYTE, buf);
     quad(176, 64, 304, 192, 1, 0);              /* a: green */
@@ -442,9 +444,9 @@ static void e6(void)
     sb = e6_step(336, 1, BLUE, GREEN, "e6b");
     sc = e6_step(496, 1, YELLOW, GREEN, "e6c");
     save("E6", 16, 64, 608, 128);
-    hx_test("e6-texcache", sa + sb + sc == 0, "stale samples a=%d b=%d c=%d; in place %lu (after sync %lu), "
-            "re-uploaded %lu", sa, sb, sc, dgl_texc.sub_fast - fast0, dgl_texc.sub_sync - sync0,
-            dgl_texc.sub_full - full0);
+    hx_test("e6-texcache", sa + sb + sc == 0, "stale samples a=%d b=%d c=%d; engine %lu, cpu %lu (after sync %lu), "
+            "re-uploaded %lu", sa, sb, sc, dgl_texc.sub_iload - iload0, dgl_texc.sub_fast - fast0,
+            dgl_texc.sub_sync - sync0, dgl_texc.sub_full - full0);
 }
 
 /* ---- E7: identity -------------------------------------------------------

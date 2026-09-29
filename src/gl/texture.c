@@ -31,6 +31,7 @@ static int white_ok;
  * only (the G400 specification says to expand 8-bit textures; untested on
  * silicon), 1 on any card that has one, 0 never. */
 static int tlut_mode;
+static int iload_mode;             /* DGL_ILOAD=0: sub-images by CPU writes only */
 static uint32_t lut_off;
 static int lut_ok;
 static const dgl_palette *lut_pal;
@@ -159,6 +160,8 @@ void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end)
     {
         const char *e = getenv("DGL_TLUT");
         tlut_mode = !mga.has_tlut ? 0 : e && *e ? (*e != '0') : !mga.has_dual_tex;
+        e = getenv("DGL_ILOAD");
+        iload_mode = !(e && *e == '0');
     }
     if (white_ok) {
         volatile uint16_t *p = (volatile uint16_t *)(mga_fb + white_off);
@@ -539,9 +542,49 @@ static uint16_t pack(const dgl_texture *t, int hwfmt, const unsigned char *p)
     return t->grey && hwfmt == DGL_TW16 ? dgl_pack_grey565(p[0]) : dgl_pack_texel(hwfmt, p[0], p[1], p[2], p[3]);
 }
 
+/* OR n texels of a level, from texel src on, into a row of dwords as the
+ * hardware stores them (first texel in the low bits) from position at. */
+static void pack_span(const dgl_texture *t, int hwfmt, const dgl_level *L, const dgl_palette *pal, size_t src,
+                      int n, uint32_t *row, int at)
+{
+    int i;
+    if (hwfmt == DGL_TW8)
+        for (i = 0; i < n; i++)
+            row[(at + i) >> 2] |= (uint32_t)L->idx[src + i] << (((at + i) & 3) * 8);
+    else
+        for (i = 0; i < n; i++)
+            row[(at + i) >> 1] |= (uint32_t)pack(t, hwfmt, texel(L, pal, src + i)) << (((at + i) & 1) * 16);
+}
+
+/* Write a rectangle of a level's hardware copy through the engine (ILOAD):
+ * queued behind the draws that read the old texels, so neither a wait nor a
+ * rename. Needs the HAL's pitch and alignment (level width a multiple of 32
+ * texels, 64 for TW8). Returns 1 if done. */
+static int sub_iload(dgl_texture *t, int level, const dgl_palette *pal, int x, int y, int w, int h)
+{
+    static uint32_t row[1024];
+    const dgl_level *L = &t->level[level];
+    int tw8 = t->hwfmt == DGL_TW8, n, j;
+    if (!iload_mode || w > 2048)
+        return 0;
+    n = engine_iload_begin(t->level_off[level], L->w, tw8 ? 8 : 16, x, y, w, h);
+    if (!n)
+        return 0;
+    for (j = 0; j < h; j++) {
+        memset(row, 0, (size_t)n * 4);
+        pack_span(t, t->hwfmt, L, pal, (size_t)(y + j) * L->w + x, w, row, 0);
+        engine_iload_row(row);
+    }
+    engine_iload_end();
+    dgl_texc.sub_iload++;
+    return 1;
+}
+
 /* Write a changed rectangle straight into the hardware copy: only when the
- * copy is current, not busy, holds this level at its own size (not widened)
- * and its format can represent the new texels' alpha. Returns 1 if done. */
+ * copy is current, holds this level at its own size (not widened) and its
+ * format can represent the new texels' alpha. Through the engine when it
+ * can (sub_iload), else by the CPU once the engine no longer reads the
+ * texture. Returns 1 if done. */
 static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
 {
     static const int fits[] = { [DGL_TW16] = DGL_ALPHA_OPAQUE, [DGL_TW15] = DGL_ALPHA_BINARY,
@@ -552,18 +595,6 @@ static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
     if (!t->resident || t->dirty || level >= t->hw_levels ||
         t->level[0].w < 8 || t->level[0].h < 8 || (pal && (t->pal_used != pal || t->pal_gen != pal->gen)))
         return 0;
-    if (dgl_texture_busy(t)) {
-        /* Queued draws may still read it. A small rectangle is cheaper to
-         * write after waiting for the engine than the whole texture is to
-         * re-upload elsewhere (GLQuake's multitexture path updates a
-         * lightmap page between the surfaces that use it). Writing the
-         * rectangle through the engine (ILOAD) would avoid both: plan Q6. */
-        if ((long)w * h * 4 > (long)L->w * L->h)
-            return 0;
-        if (dgl_sync() != 0)
-            return 0;
-        dgl_texc.sub_sync++;
-    }
     for (j = 0; j < h && cls <= fits[t->hwfmt]; j++) {
         int c = texels_class(L, pal, (size_t)(y + j) * L->w + x, w);
         if (c > cls)
@@ -571,6 +602,19 @@ static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
     }
     if (cls > fits[t->hwfmt])
         return 0;
+    if (sub_iload(t, level, pal, x, y, w, h))
+        return 1;
+    if (dgl_texture_busy(t)) {
+        /* Queued draws may still read it. A small rectangle is cheaper to
+         * write after waiting for the engine than the whole texture is to
+         * re-upload elsewhere (GLQuake's multitexture path updates a
+         * lightmap page between the surfaces that use it). */
+        if ((long)w * h * 4 > (long)L->w * L->h)
+            return 0;
+        if (dgl_sync() != 0)
+            return 0;
+        dgl_texc.sub_sync++;
+    }
     hw_w = L->w;                                  /* level >= 8x8: stored at its own size */
     if (t->hwfmt == DGL_TW8) {
         for (j = 0; j < h; j++) {
@@ -622,24 +666,27 @@ void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsi
 /* ---- Residency ------------------------------------------------------------ */
 static int mip_filter(GLenum f) { return f >= GL_NEAREST_MIPMAP_NEAREST && f <= GL_LINEAR_MIPMAP_LINEAR; }
 
-/* Write one level into VRAM at off as hw_w x hw_h texels (>= the level). */
+/* Write one level into VRAM at off as hw_w x hw_h texels (>= the level;
+ * at least 8 wide, so every row is whole dwords), a row at a time in 32-bit
+ * writes: half the bus transactions of 16-bit texel writes. */
 static void write_level(const dgl_texture *t, int l, int hwfmt, uint32_t off, int hw_w, int hw_h,
                         const dgl_palette *pal)
 {
+    static uint32_t row[1024];
     const dgl_level *L = &t->level[l];
-    volatile uint16_t *dst = (volatile uint16_t *)(mga_fb + off);
-    volatile uint8_t *dst8 = mga_fb + off;
-    int x, y;
-    for (y = 0; y < hw_h; y++)
-        for (x = 0; x < hw_w; x++) {
-            int sx = x, sy = y;
-            if (sx >= L->w) sx = t->wrap_s != GL_REPEAT ? L->w - 1 : sx % L->w;
-            if (sy >= L->h) sy = t->wrap_t != GL_REPEAT ? L->h - 1 : sy % L->h;
-            if (hwfmt == DGL_TW8)
-                dst8[y * hw_w + x] = L->idx[(size_t)sy * L->w + sx];
-            else
-                dst[y * hw_w + x] = pack(t, hwfmt, texel(L, pal, (size_t)sy * L->w + sx));
-        }
+    volatile uint32_t *dst = (volatile uint32_t *)(mga_fb + off);
+    int n = hw_w * (hwfmt == DGL_TW8 ? 1 : 2) / 4, span = hw_w < L->w ? hw_w : L->w, x, y, i;
+    for (y = 0; y < hw_h; y++, dst += n) {
+        int sy = y;
+        if (sy >= L->h) sy = t->wrap_t != GL_REPEAT ? L->h - 1 : sy % L->h;
+        memset(row, 0, (size_t)n * 4);
+        pack_span(t, hwfmt, L, pal, (size_t)sy * L->w, span, row, 0);
+        for (x = span; x < hw_w; x++)            /* widened: repeat or extend the edge */
+            pack_span(t, hwfmt, L, pal, (size_t)sy * L->w + (t->wrap_s != GL_REPEAT ? L->w - 1 : x % L->w), 1,
+                      row, x);
+        for (i = 0; i < n; i++)
+            dst[i] = row[i];
+    }
 }
 
 /* Can t (colour indices) be stored as TW8 and read through the LUT? One
