@@ -25,6 +25,9 @@ static int exit_pending;           /* DGL-START printed, DGL-EXIT owed */
 static int stats_on;                /* DGL_STATS: 1 = DGL-STAT, 2 = also DGL-PRIMS */
 static uint32_t stats_t0, stats_tris0;
 static unsigned long stats_swaps0;
+/* DGL_STATS: time the swaps spent waiting for the engine to finish the frame
+ * (the drain) and for the retrace, in the second being reported. */
+static uint32_t drain_us, retrace_us;
 
 #define ALIGN4K(x) (((x) + 4095u) & ~4095u)
 
@@ -215,7 +218,12 @@ void dglSwapBuffers(void)
 #ifdef __DJGPP__
     __djgpp_nearptr_enable();           /* the consumer may have turned near pointers off */
 #endif
-    dgl_sync();                         /* retired texture blocks go back to the heap */
+    if (stats_on) {
+        uint32_t t0 = sys_time_us();
+        dgl_sync();                     /* retired texture blocks go back to the heap */
+        drain_us += sys_time_us() - t0;
+    } else
+        dgl_sync();
     stats.swaps++;
     dgl_snap_frame(stats.swaps);        /* DGL_SNAP: before the frame is shown */
     stats.frames++;
@@ -224,9 +232,11 @@ void dglSwapBuffers(void)
     if (stats_on) {
         uint32_t now = sys_time_us(), dt = now - stats_t0;
         if (dt >= 1000000u) {
-            DGL_ERR("DGL-STAT fps=%.1f tris/s=%.0f swaps=%lu tex_kb=%lu stubs=%lu",
+            DGL_ERR("DGL-STAT fps=%.1f tris/s=%.0f swaps=%lu tex_kb=%lu stubs=%lu drain_ms=%lu retrace_ms=%lu",
                     (stats.swaps - stats_swaps0) * 1e6 / dt, (setup_stats.tris - stats_tris0) * 1e6 / dt, stats.swaps,
-                    (unsigned long)(dgl_vram_used() >> 10), dgl_stub_calls);
+                    (unsigned long)(dgl_vram_used() >> 10), dgl_stub_calls, (unsigned long)(drain_us / 1000),
+                    (unsigned long)(retrace_us / 1000));
+            drain_us = retrace_us = 0;
             if (stats_on >= 2) {
                 DGL_ERR("DGL-PRIMS begins=%lu skipped=%lu tris=%lu clipped=%lu zero=%lu culled=%lu",
                         dgl_prims.begins, dgl_prims.skipped, dgl_prims.tris_in, dgl_prims.clipped,
@@ -250,8 +260,12 @@ void dglSwapBuffers(void)
     if (!dgl_ctx.double_buffer)
         return;
     show = dgl_ctx.front_is_a ? dgl_ctx.back_off : dgl_ctx.front_off;
-    if (dgl_ctx.vsync)
+    if (dgl_ctx.vsync) {
+        uint32_t t0 = stats_on ? sys_time_us() : 0;
         engine_vsync_wait(50000);
+        if (stats_on)
+            retrace_us += sys_time_us() - t0;
+    }
     vbe_set_display_start(show, dgl_ctx.pitch_px * 2, 16);
     dgl_ctx.front_is_a = !dgl_ctx.front_is_a;
     set_target();
