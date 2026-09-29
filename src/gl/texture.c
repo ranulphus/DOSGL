@@ -26,6 +26,15 @@ static GLuint bound_u[2];                /* names bound to GL_TEXTURE_2D, per te
 #define bound (bound_u[dgl_gl.active_unit])   /* the active unit's */
 static uint32_t white_off;
 static int white_ok;
+/* The hardware texture LUT (G200): the palette last loaded into it, from a
+ * 512-byte block of RGB565 entries. DGL_TLUT: unset uses it on the G200
+ * only (the G400 specification says to expand 8-bit textures; untested on
+ * silicon), 1 on any card that has one, 0 never. */
+static int tlut_mode;
+static uint32_t lut_off;
+static int lut_ok;
+static const dgl_palette *lut_pal;
+static unsigned lut_gen;
 static GLenum env_mode_u[2] = { GL_MODULATE, GL_MODULATE };
 static GLfloat env_color_u[2][4];       /* GL_TEXTURE_ENV_COLOR */
 #define env_mode (env_mode_u[dgl_gl.active_unit])
@@ -145,6 +154,12 @@ void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end)
     memset(env_color_u, 0, sizeof env_color_u);
     dgl_vram_init(heap_start, heap_end);
     white_ok = dgl_vram_alloc(8 * 8 * 2, &white_off) == 0;
+    lut_ok = dgl_vram_alloc(256 * 2, &lut_off) == 0;
+    lut_pal = NULL;
+    {
+        const char *e = getenv("DGL_TLUT");
+        tlut_mode = !mga.has_tlut ? 0 : e && *e ? (*e != '0') : !mga.has_dual_tex;
+    }
     if (white_ok) {
         volatile uint16_t *p = (volatile uint16_t *)(mga_fb + white_off);
         for (i = 0; i < 64; i++)
@@ -557,6 +572,15 @@ static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
     if (cls > fits[t->hwfmt])
         return 0;
     hw_w = L->w;                                  /* level >= 8x8: stored at its own size */
+    if (t->hwfmt == DGL_TW8) {
+        for (j = 0; j < h; j++) {
+            volatile uint8_t *d8 = mga_fb + t->level_off[level] + (size_t)(y + j) * hw_w + x;
+            for (i = 0; i < w; i++)
+                d8[i] = L->idx[(size_t)(y + j) * L->w + x + i];
+        }
+        dgl_texc.sub_fast++;
+        return 1;
+    }
     for (j = 0; j < h; j++) {
         volatile uint16_t *dst = (volatile uint16_t *)(mga_fb + t->level_off[level]) + (size_t)(y + j) * hw_w + x;
         size_t row = (size_t)(y + j) * L->w + x;
@@ -604,14 +628,43 @@ static void write_level(const dgl_texture *t, int l, int hwfmt, uint32_t off, in
 {
     const dgl_level *L = &t->level[l];
     volatile uint16_t *dst = (volatile uint16_t *)(mga_fb + off);
+    volatile uint8_t *dst8 = mga_fb + off;
     int x, y;
     for (y = 0; y < hw_h; y++)
         for (x = 0; x < hw_w; x++) {
             int sx = x, sy = y;
             if (sx >= L->w) sx = t->wrap_s != GL_REPEAT ? L->w - 1 : sx % L->w;
             if (sy >= L->h) sy = t->wrap_t != GL_REPEAT ? L->h - 1 : sy % L->h;
-            dst[y * hw_w + x] = pack(t, hwfmt, texel(L, pal, (size_t)sy * L->w + sx));
+            if (hwfmt == DGL_TW8)
+                dst8[y * hw_w + x] = L->idx[(size_t)sy * L->w + sx];
+            else
+                dst[y * hw_w + x] = pack(t, hwfmt, texel(L, pal, (size_t)sy * L->w + sx));
         }
+}
+
+/* Can t (colour indices) be stored as TW8 and read through the LUT? One
+ * LUT holds one palette: the shared one, and only while it is opaque. */
+static int tlut_capable(const dgl_palette *pal)
+{
+    return tlut_mode && lut_ok && dgl_gl.shared_palette && pal && pal->width && pal->opaque;
+}
+
+void dgl_texture_lut(const dgl_texture *t)
+{
+    const dgl_palette *pal = t->pal_used;
+    volatile uint16_t *dst = (volatile uint16_t *)(mga_fb + lut_off);
+    int i;
+    if (t->hwfmt != DGL_TW8 || !pal || (pal == lut_pal && pal->gen == lut_gen))
+        return;
+    dgl_sync();                                      /* the last load may still be reading the block */
+    for (i = 0; i < 256; i++) {
+        const unsigned char *p = dgl_palette_texel(pal, (unsigned)i);
+        dst[i] = dgl_pack_texel(DGL_TW16, p[0], p[1], p[2], 255);
+    }
+    engine_tlut_load(lut_off, 0, 256);
+    lut_pal = pal;
+    lut_gen = pal->gen;
+    dgl_texc.lut_loads++;
 }
 
 int dgl_texture_ready(dgl_texture *t)
@@ -619,8 +672,10 @@ int dgl_texture_ready(dgl_texture *t)
     int levels = 1, l, cls = DGL_ALPHA_OPAQUE, hw_w, hw_h;
     uint32_t size = 0, off;
     const dgl_palette *pal = t->level[0].idx ? dgl_palette_for(t) : NULL;
-    if (!t->dirty && t->resident && (!pal || (t->pal_used == pal && t->pal_gen == pal->gen)))
-        return 0;
+    int bpt, tw8;
+    if (!t->dirty && t->resident &&
+        (!pal || (t->pal_used == pal && (t->hwfmt == DGL_TW8 ? tlut_capable(pal) : t->pal_gen == pal->gen))))
+        return 0;                                    /* a TW8 texture follows its palette through the LUT */
     /* The levels that go to the hardware: level 0, then while the chain halves
      * correctly and stays >= 8x8, up to the window and GL_TEXTURE_MAX_LEVEL. */
     if (mip_filter(t->min_filter) && mga.max_mip_levels > 1) {
@@ -644,8 +699,10 @@ int dgl_texture_ready(dgl_texture *t)
               t->level[0].ifc == DGL_IF_LUMINANCE_ALPHA;
     hw_w = t->level[0].w < 8 ? 8 : t->level[0].w;
     hw_h = t->level[0].h < 8 ? 8 : t->level[0].h;
+    tw8 = pal && tlut_capable(pal);                  /* one byte a texel */
+    bpt = tw8 ? 1 : 2;
     for (l = 0; l < levels; l++)
-        size += (((uint32_t)(hw_w >> l) * (uint32_t)(hw_h >> l) * 2u) + 31u) & ~31u;
+        size += (((uint32_t)(hw_w >> l) * (uint32_t)(hw_h >> l) * (uint32_t)bpt) + 31u) & ~31u;
     if (t->resident && (t->vram_size != size || dgl_texture_busy(t))) {
         if (dgl_texture_busy(t))
             dgl_texc.renames++;                      /* queued draws keep reading the old block */
@@ -667,7 +724,7 @@ int dgl_texture_ready(dgl_texture *t)
     }
     dgl_texc.uploads++;
     dgl_texc.upload_bytes += size;
-    t->hwfmt = dgl_hwfmt_for_class(cls);
+    t->hwfmt = tw8 ? DGL_TW8 : dgl_hwfmt_for_class(cls);
     t->hw_levels = levels;
     t->hw_w_log2 = log2i(hw_w);
     t->hw_h_log2 = log2i(hw_h);
@@ -675,7 +732,7 @@ int dgl_texture_ready(dgl_texture *t)
     for (l = 0; l < levels; l++) {
         t->level_off[l] = off;
         write_level(t, l, t->hwfmt, off, hw_w >> l, hw_h >> l, pal);
-        off += (((uint32_t)(hw_w >> l) * (uint32_t)(hw_h >> l) * 2u) + 31u) & ~31u;
+        off += (((uint32_t)(hw_w >> l) * (uint32_t)(hw_h >> l) * (uint32_t)bpt) + 31u) & ~31u;
     }
     t->pal_used = pal;
     t->pal_gen = pal ? pal->gen : 0;

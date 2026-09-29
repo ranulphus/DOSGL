@@ -169,6 +169,7 @@ static void validate(void)
         tex = NULL;
     } else if (tex) {
         dgl_texture_drawn(tex);        /* busy until the next completed sync */
+        dgl_texture_lut(tex);          /* TW8: its palette in the LUT (queued before this draw) */
     }
     if (tex && tex1) {
         /* Busy, map 0's texture cannot be evicted to make room for map 1's
@@ -179,6 +180,7 @@ static void validate(void)
         } else {
             dgl_texture_drawn(tex1);
             dgl_texture_drawn(tex);
+            dgl_texture_lut(tex1);     /* both maps share one LUT (the shared palette) */
         }
     }
     if ((dgl_gl.dirty & DGL_DIRTY_TEXTURE) || !tex != (textured != 1) || (tex1 != NULL) != (dual && !map1_copy) ||

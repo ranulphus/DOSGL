@@ -233,8 +233,9 @@ void dglSwapBuffers(void)
                         dgl_prims.zero_area, dgl_prims.culled);
                 memset(&dgl_prims, 0, sizeof dgl_prims);
                 DGL_ERR("DGL-TEX uploads=%lu kb=%lu sub_fast=%lu sub_sync=%lu sub_full=%lu renames=%lu evictions=%lu "
-                        "syncs=%lu", dgl_texc.uploads, dgl_texc.upload_bytes >> 10, dgl_texc.sub_fast,
-                        dgl_texc.sub_sync, dgl_texc.sub_full, dgl_texc.renames, dgl_texc.evictions, dgl_texc.syncs);
+                        "syncs=%lu lut_loads=%lu", dgl_texc.uploads, dgl_texc.upload_bytes >> 10, dgl_texc.sub_fast,
+                        dgl_texc.sub_sync, dgl_texc.sub_full, dgl_texc.renames, dgl_texc.evictions, dgl_texc.syncs,
+                        dgl_texc.lut_loads);
                 memset(&dgl_texc, 0, sizeof dgl_texc);
             }
             stats_t0 = now;

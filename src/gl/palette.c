@@ -70,6 +70,13 @@ static int load(dgl_palette *p, int start, int count, GLenum format, GLenum type
         dgl_apply_ifmt(dgl_ifmt_class((GLint)p->ifmt), p->rgba + start * 4, count);
     }
     p->gen++;
+    p->opaque = 1;
+    {
+        int i, n = start + count > p->width ? start + count : p->width;
+        for (i = 0; i < n && i < 256; i++)
+            if (p->rgba[i * 4 + 3] != 255)
+                p->opaque = 0;
+    }
     dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
     return 0;
 }

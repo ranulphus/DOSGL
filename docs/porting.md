@@ -46,7 +46,8 @@ dglShutdown();
     `DGL_STATS=2` adds where primitives went (`DGL-PRIMS`: skipped, clipped
     away, zero area, culled) and texture traffic (`DGL-TEX`: uploads,
     sub-image writes in place, in place after waiting for the engine, or as
-    whole re-uploads, renames, evictions, syncs forced by texture memory).
+    whole re-uploads, renames, evictions, syncs forced by texture memory,
+    palettes loaded into the lookup table).
   - `DGL_VSYNC=0` or `1` overrides the program's choice of swap on retrace.
   - `DGL_TEXHEAP_KB=n` caps the texture heap (to test eviction, or to
     behave like a card with less memory).
@@ -78,5 +79,5 @@ dglShutdown();
 | Display lists | `GL_COMPILE` and `GL_COMPILE_AND_EXECUTE` capture draw calls and immediate-mode blocks only; other calls made while compiling take effect immediately; no nesting |
 | Polygon mode | Fill only |
 | Lines and points | Screen-space quads of the line width and point size |
-| Paletted textures | `GL_EXT_paletted_texture` and `GL_EXT_shared_texture_palette`: `GL_COLOR_INDEX*_EXT` textures keep their 8-bit indices and are expanded through the palette (shared or their own) into the 16-bit formats when they go to VRAM, so they save RAM, not VRAM; a palette change re-uploads the textures that use it when next drawn. Indices go only into colour-index textures (no pixel maps) |
+| Paletted textures | `GL_EXT_paletted_texture` and `GL_EXT_shared_texture_palette`: `GL_COLOR_INDEX*_EXT` textures keep their 8-bit indices. On the G200, textures using the shared palette while it is opaque are stored as 8-bit indices and read through the chip's lookup table (half the VRAM; a palette change reloads the table). Otherwise they are expanded through the palette (shared or their own) into the 16-bit formats when they go to VRAM, and a palette change re-uploads the textures that use it when next drawn. `DGL_TLUT=1` uses the lookup table on the G400/G450 too (the G400 specification says to expand 8-bit textures; untested on silicon), `DGL_TLUT=0` never. Indices go only into colour-index textures (no pixel maps) |
 | Extensions | `GL_EXT_bgra`, `GL_EXT_texture_edge_clamp`, `GL_SGIS_texture_edge_clamp`, `GL_EXT_paletted_texture`, `GL_EXT_shared_texture_palette`; on the G400/G450 also `GL_ARB_multitexture` and `GL_SGIS_multitexture`. Prototypes in `GL/glext.h` with `GL_GLEXT_PROTOTYPES` |

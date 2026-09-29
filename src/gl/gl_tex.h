@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 /* Hardware texel formats (TEXCTL.texformat codes). */
-enum { DGL_TW15 = 2, DGL_TW16 = 3, DGL_TW12 = 4 };
+enum { DGL_TW8 = 1, DGL_TW15 = 2, DGL_TW16 = 3, DGL_TW12 = 4 };   /* TW8: indices into the texture LUT */
 enum { DGL_ALPHA_OPAQUE, DGL_ALPHA_BINARY, DGL_ALPHA_GRADIENT };
 /* Internal format classes (what the texture keeps of its texels). */
 enum { DGL_IF_RGBA, DGL_IF_RGB, DGL_IF_RGB5_A1, DGL_IF_LUMINANCE, DGL_IF_LUMINANCE_ALPHA, DGL_IF_ALPHA,
@@ -50,6 +50,7 @@ typedef struct {
 typedef struct {
     unsigned char rgba[256 * 4];
     int      width;                 /* entries, a power of two; 0 = none */
+    int      opaque;                /* every entry has alpha 255 */
     GLenum   ifmt;
     unsigned gen;
 } dgl_palette;
@@ -84,6 +85,7 @@ typedef struct {
     unsigned long uploads, upload_bytes;    /* whole textures written to VRAM */
     unsigned long sub_fast, sub_full;       /* glTexSubImage2D: rectangle written / whole re-upload */
     unsigned long sub_sync;                 /* rectangles written after waiting for the engine */
+    unsigned long lut_loads;                /* palettes loaded into the texture LUT (TW8) */
     unsigned long renames, evictions, syncs;
 } dgl_tex_counts;
 extern dgl_tex_counts dgl_texc;
@@ -92,6 +94,7 @@ dgl_texture *dgl_unit_texture(int unit);        /* a unit's bound texture; NULL 
 GLenum dgl_tex_env_mode(int unit);
 const GLfloat *dgl_tex_env_color(int unit);
 dgl_palette *dgl_bound_palette(void);           /* the bound texture's own table (created) */
+void dgl_texture_lut(const dgl_texture *t);     /* before drawing a TW8 texture: its palette in the LUT */
 
 /* palette.c */
 void dgl_palettes_reset(void);
