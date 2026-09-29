@@ -6,7 +6,8 @@
 # Sources: the checkouts $QDOS_DIR and $Q2DOS_DIR (default ~/qdos-dosgl and
 # ~/q2dos-dosgl), cloned from the forks in tools/quake/deps.mk when missing.
 # The pinned commits are exported with git archive into build/quake/src and
-# built there; --work builds the checkouts' tracked files as they are instead.
+# built there; --work builds the checkouts as they are instead (tracked and
+# new files, not ignored ones).
 # Output in build/quake:
 #   QDOSDGL.EXE   Quake on DOS-GL             Q2DGL.EXE    Quake 2 on DOS-GL
 #   GAMEX86.DXE   Quake 2's game module       DOSLFN.COM   long file names (q2dos's doslfn.zip)
@@ -36,7 +37,7 @@ export_tree() {
   [ -d "$dir/.git" ] || git clone -q "$url" "$dir"
   rm -rf "$dst"; mkdir -p "$dst"
   if [ $work = 1 ]; then
-    (cd "$dir" && git ls-files -z | tar --null -T - -cf -) | tar -x -C "$dst"
+    (cd "$dir" && git ls-files -z -co --exclude-standard -x '*.exe' -x '*.EXE' -x '*.dxe' | tar --null -T - -cf -) | tar -x -C "$dst"
     echo "quake: $name from the working tree of $dir ($(git -C "$dir" describe --always --dirty))"
   else
     git -C "$dir" cat-file -e "$commit^{commit}" 2>/dev/null || git -C "$dir" fetch -q "$url" "$commit"
