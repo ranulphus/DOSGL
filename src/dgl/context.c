@@ -110,7 +110,10 @@ int dglInit(const DGLConfig *cfg)
                       (unsigned long)dgl_ctx.heap_off, (unsigned long)dgl_ctx.vram_bytes);
         return -1;
     }
-    mga.fb_size = mga.vram_bytes;
+    /* Map at least 16 MB (the most a G200 carries; every supported card's
+     * aperture is that big or bigger), so the probe below can find VRAM the
+     * BIOS did not report. */
+    mga.fb_size = mga.vram_bytes > (16u << 20) ? mga.vram_bytes : (16u << 20);
     if (mga_map(&mga) != 0) {
         dgl_set_error("cannot map the card's apertures (DPMI 0800h)");
         return -1;
@@ -120,6 +123,18 @@ int dglInit(const DGLConfig *cfg)
         dgl_teardown();
         dgl_set_error("VBE mode %03x with pitch %d failed (BIOS gave %d)", m->mode, dgl_ctx.pitch_px, pitch);
         return -1;
+    }
+    {
+        /* VBE's total memory can be short: Matrox's G200 BIOS reports 2 MB of
+         * 8 in 86Box. In graphics mode VRAM can be written freely, so probe it
+         * and keep the larger size for the texture heap. */
+        uint32_t probed = mga_probe_vram();
+        if (probed > dgl_ctx.vram_bytes) {
+            DGL_WARN("DGL-VRAM the BIOS reports %lu KB, the card has %lu KB", (unsigned long)(dgl_ctx.vram_bytes >> 10),
+                     (unsigned long)(probed >> 10));
+            dgl_ctx.vram_bytes = probed;
+            dgl_note_vram(probed);
+        }
     }
     engine_init(dgl_ctx.pitch_px, 16);
     {
@@ -144,7 +159,7 @@ int dglInit(const DGLConfig *cfg)
     {
         const char *e = getenv("DGL_EXIT_AFTER");
         exit_after = e ? strtoul(e, NULL, 10) : 0;
-        if (exit_after) {               /* the harness pairs each DGL-START with a DGL-EXIT */
+        if (e && *e) {                  /* the harness pairs each DGL-START with a DGL-EXIT; 0 = no limit */
             exit_pending = 1;
             DGL_ERR("DGL-START %dx%d exit_after=%lu", c.width, c.height, exit_after);
         }

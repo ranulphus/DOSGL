@@ -39,9 +39,9 @@ dglShutdown();
 - `dglGetProcAddress(name)` returns any GL 1.1 function and the extension
   functions DOS-GL implements (for programs that bind GL at run time).
 - Test hooks, over COM1:
-  - `DGL_EXIT_AFTER=n` ends the program after n swaps. `dglInit` then logs
-    `DGL-START` and every way out logs `DGL-EXIT frames=n`, which is how
-    Loop A knows a program has finished.
+  - `DGL_EXIT_AFTER=n` ends the program after n swaps (0: no limit). With
+    it set, `dglInit` logs `DGL-START` and every way out logs
+    `DGL-EXIT frames=n`, which is how Loop A knows a program has finished.
   - `DGL_STATS=1` logs frame and triangle rates once a second (`DGL-STAT`);
     `DGL_STATS=2` adds where primitives went (`DGL-PRIMS`: skipped, clipped
     away, zero area, culled) and texture traffic (`DGL-TEX`: uploads,

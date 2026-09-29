@@ -28,6 +28,7 @@ int      dgl_vram_alloc(uint32_t size, uint32_t *off);     /* 0 ok, -1 out of me
 void     dgl_vram_free(uint32_t off);
 uint32_t dgl_vram_used(void);
 int      dgl_vram_blocks(void);
+uint32_t dgl_vram_largest_free(void);
 int      dgl_vram_retire(uint32_t off);   /* free after the next sync; -1 = list full, sync first */
 int      dgl_vram_retired(void);           /* blocks waiting for a sync */
 void     dgl_vram_sync_done(void);         /* the engine is idle: free the retired blocks */

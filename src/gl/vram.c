@@ -93,6 +93,16 @@ void dgl_vram_free(uint32_t off)
 
 int dgl_vram_blocks(void) { return nblocks; }
 
+uint32_t dgl_vram_largest_free(void)
+{
+    uint32_t m = 0;
+    int i;
+    for (i = 0; i < nblocks; i++)
+        if (!blocks[i].used && blocks[i].size > m)
+            m = blocks[i].size;
+    return m;
+}
+
 int dgl_vram_retire(uint32_t off)
 {
     if (nretired == MAX_RETIRED)

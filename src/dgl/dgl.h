@@ -26,6 +26,7 @@ void dgl_set_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* device.c: discovery (once) and the filtered mode list. */
 int dgl_discover(void);                   /* 0 = a supported card was found */
+void dgl_note_vram(uint32_t bytes);       /* the probed VRAM size, when larger than VBE's */
 const mga_vbe_mode *dgl_vbe_mode_for(int width, int height);
 int dgl_pitch_for(int width);             /* pixels, engine rules */
 

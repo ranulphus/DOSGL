@@ -12,6 +12,13 @@
 
 static int discovered;                   /* 0 not yet, 1 found, -1 none */
 static DGLDeviceInfo info;
+
+/* dglInit found more VRAM than the BIOS reported (a probe in graphics mode). */
+void dgl_note_vram(uint32_t bytes)
+{
+    info.vram_bytes = bytes;
+    mga.vram_bytes = bytes;
+}
 static mga_vbe_mode vbe_modes[MAX_MODES];
 static DGLMode modes[MAX_MODES];
 static int nmodes;

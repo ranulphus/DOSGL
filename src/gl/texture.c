@@ -633,6 +633,11 @@ int dgl_texture_ready(dgl_texture *t)
     }
     if (!t->resident) {
         if (alloc_vram(t, size, &off) != 0) {
+            static int logged;
+            if (logged < 4 && ++logged)
+                DGL_WARN("DGL-TEXOOM tex=%u %dx%d levels=%d bytes=%lu heap_used=%lu largest_free=%lu blocks=%d",
+                         t->name, t->level[0].w, t->level[0].h, levels, (unsigned long)size,
+                         (unsigned long)dgl_vram_used(), (unsigned long)dgl_vram_largest_free(), dgl_vram_blocks());
             dgl_gl_error(GL_OUT_OF_MEMORY);          /* the draw is skipped (PRD §8.3) */
             return -1;
         }
