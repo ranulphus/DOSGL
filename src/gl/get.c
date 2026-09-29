@@ -60,6 +60,7 @@ static int query(GLenum p, double *v)
     case GL_DITHER: v[0] = dgl_gl.dither; return 1;
     case GL_POLYGON_OFFSET_FILL: v[0] = dgl_gl.offset_fill; return 1;
     case GL_STENCIL_TEST: v[0] = dgl_gl.stencil_test; return 1;
+    case GL_SHARED_TEXTURE_PALETTE_EXT: v[0] = dgl_gl.shared_palette; return 1;
     case GL_VERTEX_ARRAY: v[0] = dgl_gl.va.enabled; return 1;
     case GL_COLOR_ARRAY: v[0] = dgl_gl.ca.enabled; return 1;
     case GL_TEXTURE_COORD_ARRAY: v[0] = dgl_gl.ta.enabled; return 1;
@@ -162,7 +163,8 @@ void APIENTRY glGetBooleanv(GLenum p, GLboolean *out)
 static const char *extensions(void)
 {
     return "GL_EXT_bgra "
-           "GL_EXT_texture_edge_clamp GL_SGIS_texture_edge_clamp ";
+           "GL_EXT_texture_edge_clamp GL_SGIS_texture_edge_clamp "
+           "GL_EXT_paletted_texture GL_EXT_shared_texture_palette ";
 }
 
 const GLubyte *APIENTRY glGetString(GLenum name)

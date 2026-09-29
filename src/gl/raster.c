@@ -16,6 +16,7 @@ static int *cap_flag(GLenum cap)
     case GL_DITHER:       return &dgl_gl.dither;
     case GL_POLYGON_OFFSET_FILL: return &dgl_gl.offset_fill;
     case GL_STENCIL_TEST: return &dgl_gl.stencil_test;
+    case GL_SHARED_TEXTURE_PALETTE_EXT: return &dgl_gl.shared_palette;
     default:              return 0;
     }
 }

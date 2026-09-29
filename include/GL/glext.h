@@ -72,6 +72,14 @@
 #ifndef GL_COLOR_TABLE_WIDTH_EXT
 #define GL_COLOR_TABLE_WIDTH_EXT 0x80D9
 #endif
+#ifndef GL_COLOR_TABLE_RED_SIZE_EXT
+#define GL_COLOR_TABLE_RED_SIZE_EXT 0x80DA
+#define GL_COLOR_TABLE_GREEN_SIZE_EXT 0x80DB
+#define GL_COLOR_TABLE_BLUE_SIZE_EXT 0x80DC
+#define GL_COLOR_TABLE_ALPHA_SIZE_EXT 0x80DD
+#define GL_COLOR_TABLE_LUMINANCE_SIZE_EXT 0x80DE
+#define GL_COLOR_TABLE_INTENSITY_SIZE_EXT 0x80DF
+#endif
 #ifndef GL_SHARED_TEXTURE_PALETTE_EXT
 #define GL_SHARED_TEXTURE_PALETTE_EXT 0x81FB
 #endif
@@ -133,5 +141,28 @@
 #ifndef GL_TEXTURE1_SGIS
 #define GL_TEXTURE1_SGIS 0x835F
 #endif
+
+/* Entry points DOS-GL implements, reached through dglGetProcAddress or
+ * declared here when GL_GLEXT_PROTOTYPES is defined (as with Mesa's glext.h;
+ * programs that keep their own function pointers never see them). */
+#ifdef GL_GLEXT_PROTOTYPES
+#ifndef APIENTRY
+#define APIENTRY
+#endif
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* GL_EXT_paletted_texture */
+void APIENTRY glColorTableEXT(GLenum target, GLenum internalformat, GLsizei width, GLenum format, GLenum type,
+                              const GLvoid *table);
+void APIENTRY glColorSubTableEXT(GLenum target, GLsizei start, GLsizei count, GLenum format, GLenum type,
+                                 const GLvoid *data);
+void APIENTRY glGetColorTableEXT(GLenum target, GLenum format, GLenum type, GLvoid *data);
+void APIENTRY glGetColorTableParameterivEXT(GLenum target, GLenum pname, GLint *params);
+void APIENTRY glGetColorTableParameterfvEXT(GLenum target, GLenum pname, GLfloat *params);
+#ifdef __cplusplus
+}
+#endif
+#endif /* GL_GLEXT_PROTOTYPES */
 
 #endif /* __glext_h_ */

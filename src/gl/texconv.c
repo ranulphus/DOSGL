@@ -86,6 +86,9 @@ int dgl_ifmt_class(GLint f)
         return DGL_IF_ALPHA;
     case GL_INTENSITY: case GL_INTENSITY4: case GL_INTENSITY8: case GL_INTENSITY12: case GL_INTENSITY16:
         return DGL_IF_INTENSITY;
+    case GL_COLOR_INDEX1_EXT: case GL_COLOR_INDEX2_EXT: case GL_COLOR_INDEX4_EXT: case GL_COLOR_INDEX8_EXT:
+    case GL_COLOR_INDEX12_EXT: case GL_COLOR_INDEX16_EXT:
+        return DGL_IF_INDEX;                      /* 8-bit indices, masked by the palette's width */
     default:
         return -1;
     }
@@ -123,7 +126,7 @@ int dgl_format_bytes(GLenum format)
     case GL_RGBA: case GL_BGRA_EXT: return 4;
     case GL_RGB: case GL_BGR_EXT: return 3;
     case GL_LUMINANCE_ALPHA: return 2;
-    case GL_LUMINANCE: case GL_ALPHA: return 1;
+    case GL_LUMINANCE: case GL_ALPHA: case GL_COLOR_INDEX: return 1;
     default: return 0;
     }
 }

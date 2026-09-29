@@ -1,6 +1,7 @@
 /* gl_state.h - the GL state DOS-GL tracks (PRD §5.3, FR-ST-1..3). */
 #ifndef DGL_GL_STATE_H
 #define DGL_GL_STATE_H
+#define GL_GLEXT_PROTOTYPES 1          /* DOS-GL defines the extension entry points */
 #include <GL/gl.h>
 #include <GL/glext.h>
 
@@ -66,7 +67,7 @@ typedef struct {
      * quads), polygon offset, and stencil state accepted with no stencil
      * buffer (0 bits: the test always passes, PRD §2.2). */
     GLfloat point_size, line_width, offset_factor, offset_units;
-    int     offset_fill, stencil_test;
+    int     offset_fill, stencil_test, shared_palette;
     GLenum  stencil_func, stencil_fail, stencil_zfail, stencil_zpass;
     GLint   stencil_ref, clear_stencil;
     GLuint  stencil_mask, stencil_writemask;

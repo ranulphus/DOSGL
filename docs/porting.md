@@ -77,4 +77,5 @@ dglShutdown();
 | Display lists | `GL_COMPILE` and `GL_COMPILE_AND_EXECUTE` capture draw calls and immediate-mode blocks only; other calls made while compiling take effect immediately; no nesting |
 | Polygon mode | Fill only |
 | Lines and points | Screen-space quads of the line width and point size |
-| Extensions | `GL_EXT_bgra`, `GL_EXT_texture_edge_clamp`, `GL_SGIS_texture_edge_clamp` |
+| Paletted textures | `GL_EXT_paletted_texture` and `GL_EXT_shared_texture_palette`: `GL_COLOR_INDEX*_EXT` textures keep their 8-bit indices and are expanded through the palette (shared or their own) into the 16-bit formats when they go to VRAM, so they save RAM, not VRAM; a palette change re-uploads the textures that use it when next drawn. Indices go only into colour-index textures (no pixel maps) |
+| Extensions | `GL_EXT_bgra`, `GL_EXT_texture_edge_clamp`, `GL_SGIS_texture_edge_clamp`, `GL_EXT_paletted_texture`, `GL_EXT_shared_texture_palette`; prototypes in `GL/glext.h` with `GL_GLEXT_PROTOTYPES` |

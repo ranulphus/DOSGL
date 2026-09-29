@@ -121,8 +121,11 @@ static void destroy(GLuint name)
     if (!t)
         return;
     release_vram(t);
-    for (l = 0; l < DGL_MAX_LEVELS; l++)
+    for (l = 0; l < DGL_MAX_LEVELS; l++) {
         free(t->level[l].rgba);
+        free(t->level[l].idx);
+    }
+    free(t->own);
     free(t);
     tex[name] = NULL;
 }
@@ -133,6 +136,7 @@ void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end)
     for (i = 0; i < MAX_TEXTURES; i++)
         destroy(i);
     bound = 0;
+    dgl_palettes_reset();
     env_mode = GL_MODULATE;
     memset(env_color, 0, sizeof env_color);
     dgl_vram_init(heap_start, heap_end);
@@ -153,7 +157,15 @@ int dgl_white_texture(uint32_t *off)
 dgl_texture *dgl_bound_texture(void)
 {
     dgl_texture *t = get(bound, 0);
-    return t && t->level[0].rgba ? t : NULL;
+    return t && DGL_LEVEL_DEFINED(&t->level[0]) ? t : NULL;
+}
+
+dgl_palette *dgl_bound_palette(void)
+{
+    dgl_texture *t = get(bound, 1);
+    if (t && !t->own)
+        t->own = (dgl_palette *)calloc(1, sizeof *t->own);
+    return t ? t->own : NULL;
 }
 
 /* ---- Names -------------------------------------------------------------- */
@@ -307,7 +319,8 @@ void APIENTRY glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname,
     case GL_TEXTURE_WIDTH: out[0] = L ? L->w : 0; break;
     case GL_TEXTURE_HEIGHT: out[0] = L ? L->h : 0; break;
     case GL_TEXTURE_BORDER: out[0] = 0; break;
-    case GL_TEXTURE_INTERNAL_FORMAT: out[0] = t && t->hwfmt == DGL_TW16 ? GL_RGB : GL_RGBA; break;
+    case GL_TEXTURE_INTERNAL_FORMAT: out[0] = L && DGL_LEVEL_DEFINED(L) ? L->ifmt : 1; break;
+    case GL_TEXTURE_INDEX_SIZE_EXT: out[0] = L && L->idx ? 8 : 0; break;
     case GL_TEXTURE_RED_SIZE: case GL_TEXTURE_BLUE_SIZE:
         out[0] = !t ? 0 : t->hwfmt == DGL_TW12 ? 4 : 5; break;
     case GL_TEXTURE_GREEN_SIZE: out[0] = !t ? 0 : t->hwfmt == DGL_TW12 ? 4 : t->hwfmt == DGL_TW15 ? 5 : 6; break;
@@ -424,6 +437,38 @@ static void unpack(GLenum format, const void *pixels, int w, int h, unsigned cha
     }
 }
 
+/* Copy client rows of 8-bit colour indices. */
+static void unpack_idx(const void *pixels, int w, int h, unsigned char *dst, int dst_stride)
+{
+    int stride = (w + dgl_gl.unpack_align - 1) / dgl_gl.unpack_align * dgl_gl.unpack_align, y;
+    for (y = 0; y < h; y++)
+        memcpy(dst + (size_t)y * dst_stride, (const unsigned char *)pixels + (size_t)y * stride, (size_t)w);
+}
+
+/* Texel i of a level as RGBA8: its shadow, or its index looked up in pal. */
+static const unsigned char *texel(const dgl_level *L, const dgl_palette *pal, size_t i)
+{
+    return L->idx ? dgl_palette_texel(pal, L->idx[i]) : L->rgba + i * 4;
+}
+
+/* The alpha class of n texels of a level from texel i. */
+static int texels_class(const dgl_level *L, const dgl_palette *pal, size_t i, long n)
+{
+    int cls = DGL_ALPHA_OPAQUE;
+    long k;
+    if (!L->idx)
+        return dgl_alpha_class(L->rgba + i * 4, n);
+    for (k = 0; k < n; k++) {
+        unsigned a = dgl_palette_texel(pal, L->idx[i + (size_t)k])[3];
+        if (a == 255)
+            continue;
+        if (a != 0)
+            return DGL_ALPHA_GRADIENT;
+        cls = DGL_ALPHA_BINARY;
+    }
+    return cls;
+}
+
 void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei w, GLsizei h,
                            GLint border, GLenum format, GLenum type, const GLvoid *pixels)
 {
@@ -436,18 +481,32 @@ void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat, GLs
         dgl_gl_error(GL_INVALID_VALUE);
         return;
     }
+    if ((ifc == DGL_IF_INDEX) != (format == GL_COLOR_INDEX)) {
+        dgl_gl_error(GL_INVALID_OPERATION);          /* indices only into COLOR_INDEX textures (no pixel maps) */
+        return;
+    }
     t = get(bound, 1);
     if (!t) { dgl_gl_error(GL_OUT_OF_MEMORY); return; }
     L = &t->level[level];
     free(L->rgba);
-    L->rgba = (unsigned char *)calloc((size_t)w * h, 4);
-    if (!L->rgba) { L->w = L->h = 0; dgl_gl_error(GL_OUT_OF_MEMORY); return; }
+    free(L->idx);
+    L->rgba = L->idx = NULL;
+    if (ifc == DGL_IF_INDEX)
+        L->idx = (unsigned char *)calloc((size_t)w * h, 1);
+    else
+        L->rgba = (unsigned char *)calloc((size_t)w * h, 4);
+    if (!DGL_LEVEL_DEFINED(L)) { L->w = L->h = 0; dgl_gl_error(GL_OUT_OF_MEMORY); return; }
     L->w = w; L->h = h;
     L->ifc = ifc;
-    if (pixels)
+    L->ifmt = internalformat;
+    if (L->idx) {
+        if (pixels)
+            unpack_idx(pixels, w, h, L->idx, w);
+    } else if (pixels) {
         unpack(format, pixels, w, h, L->rgba, w * 4, ifc);
-    else
+    } else {
         dgl_apply_ifmt(ifc, L->rgba, (long)w * h);   /* undefined texels: at least the right class */
+    }
     t->dirty = 1;
     dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
 }
@@ -465,12 +524,13 @@ static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
     static const int fits[] = { [DGL_TW16] = DGL_ALPHA_OPAQUE, [DGL_TW15] = DGL_ALPHA_BINARY,
                                 [DGL_TW12] = DGL_ALPHA_GRADIENT };
     const dgl_level *L = &t->level[level];
+    const dgl_palette *pal = L->idx ? dgl_palette_for(t) : NULL;
     int hw_w, j, i, cls = DGL_ALPHA_OPAQUE;
     if (!t->resident || t->dirty || dgl_texture_busy(t) || level >= t->hw_levels ||
-        t->level[0].w < 8 || t->level[0].h < 8)
+        t->level[0].w < 8 || t->level[0].h < 8 || (pal && (t->pal_used != pal || t->pal_gen != pal->gen)))
         return 0;
     for (j = 0; j < h && cls <= fits[t->hwfmt]; j++) {
-        int c = dgl_alpha_class(L->rgba + ((size_t)(y + j) * L->w + x) * 4, w);
+        int c = texels_class(L, pal, (size_t)(y + j) * L->w + x, w);
         if (c > cls)
             cls = c;
     }
@@ -479,9 +539,9 @@ static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
     hw_w = L->w;                                  /* level >= 8x8: stored at its own size */
     for (j = 0; j < h; j++) {
         volatile uint16_t *dst = (volatile uint16_t *)(mga_fb + t->level_off[level]) + (size_t)(y + j) * hw_w + x;
-        const unsigned char *p = L->rgba + ((size_t)(y + j) * L->w + x) * 4;
-        for (i = 0; i < w; i++, p += 4)
-            dst[i] = pack(t, t->hwfmt, p);
+        size_t row = (size_t)(y + j) * L->w + x;
+        for (i = 0; i < w; i++)
+            dst[i] = pack(t, t->hwfmt, texel(L, pal, row + (size_t)i));
     }
     dgl_texc.sub_fast++;
     return 1;
@@ -496,12 +556,18 @@ void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsi
         return;
     t = get(bound, 0);
     L = t ? &t->level[level] : NULL;
-    if (!L || !L->rgba) { dgl_gl_error(GL_INVALID_OPERATION); return; }
+    if (!L || !DGL_LEVEL_DEFINED(L) || (L->idx != NULL) != (format == GL_COLOR_INDEX)) {
+        dgl_gl_error(GL_INVALID_OPERATION);
+        return;
+    }
     if (x < 0 || y < 0 || w < 0 || h < 0 || x + w > L->w || y + h > L->h) {
         dgl_gl_error(GL_INVALID_VALUE);
         return;
     }
-    unpack(format, pixels, w, h, L->rgba + ((size_t)y * L->w + x) * 4, L->w * 4, L->ifc);
+    if (L->idx)
+        unpack_idx(pixels, w, h, L->idx + (size_t)y * L->w + x, L->w);
+    else
+        unpack(format, pixels, w, h, L->rgba + ((size_t)y * L->w + x) * 4, L->w * 4, L->ifc);
     if (w && h && !sub_in_place(t, level, x, y, w, h)) {
         dgl_texc.sub_full++;
         t->dirty = 1;
@@ -513,7 +579,8 @@ void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsi
 static int mip_filter(GLenum f) { return f >= GL_NEAREST_MIPMAP_NEAREST && f <= GL_LINEAR_MIPMAP_LINEAR; }
 
 /* Write one level into VRAM at off as hw_w x hw_h texels (>= the level). */
-static void write_level(const dgl_texture *t, int l, int hwfmt, uint32_t off, int hw_w, int hw_h)
+static void write_level(const dgl_texture *t, int l, int hwfmt, uint32_t off, int hw_w, int hw_h,
+                        const dgl_palette *pal)
 {
     const dgl_level *L = &t->level[l];
     volatile uint16_t *dst = (volatile uint16_t *)(mga_fb + off);
@@ -521,11 +588,9 @@ static void write_level(const dgl_texture *t, int l, int hwfmt, uint32_t off, in
     for (y = 0; y < hw_h; y++)
         for (x = 0; x < hw_w; x++) {
             int sx = x, sy = y;
-            const unsigned char *p;
             if (sx >= L->w) sx = t->wrap_s != GL_REPEAT ? L->w - 1 : sx % L->w;
             if (sy >= L->h) sy = t->wrap_t != GL_REPEAT ? L->h - 1 : sy % L->h;
-            p = L->rgba + ((size_t)sy * L->w + sx) * 4;
-            dst[y * hw_w + x] = pack(t, hwfmt, p);
+            dst[y * hw_w + x] = pack(t, hwfmt, texel(L, pal, (size_t)sy * L->w + sx));
         }
 }
 
@@ -533,7 +598,8 @@ int dgl_texture_ready(dgl_texture *t)
 {
     int levels = 1, l, cls = DGL_ALPHA_OPAQUE, hw_w, hw_h;
     uint32_t size = 0, off;
-    if (!t->dirty && t->resident)
+    const dgl_palette *pal = t->level[0].idx ? dgl_palette_for(t) : NULL;
+    if (!t->dirty && t->resident && (!pal || (t->pal_used == pal && t->pal_gen == pal->gen)))
         return 0;
     /* The levels that go to the hardware: level 0, then while the chain halves
      * correctly and stays >= 8x8, up to the window and GL_TEXTURE_MAX_LEVEL. */
@@ -541,13 +607,14 @@ int dgl_texture_ready(dgl_texture *t)
         int limit = mga.max_mip_levels < WINDOW_LEVELS ? mga.max_mip_levels : WINDOW_LEVELS;
         if (limit > t->max_level + 1)
             limit = t->max_level + 1;
-        while (levels < limit && t->level[levels].rgba && t->level[levels].w == t->level[levels - 1].w / 2 &&
+        while (levels < limit && DGL_LEVEL_DEFINED(&t->level[levels]) &&
+               (t->level[levels].idx != NULL) == (pal != NULL) && t->level[levels].w == t->level[levels - 1].w / 2 &&
                t->level[levels].h == t->level[levels - 1].h / 2 && t->level[levels].w >= 8 &&
                t->level[levels].h >= 8)
             levels++;
     }
     for (l = 0; l < levels; l++) {
-        int c = dgl_alpha_class(t->level[l].rgba, (long)t->level[l].w * t->level[l].h);
+        int c = texels_class(&t->level[l], pal, 0, (long)t->level[l].w * t->level[l].h);
         if (c > cls)
             cls = c;
     }
@@ -582,9 +649,12 @@ int dgl_texture_ready(dgl_texture *t)
     off = t->vram_off;
     for (l = 0; l < levels; l++) {
         t->level_off[l] = off;
-        write_level(t, l, t->hwfmt, off, hw_w >> l, hw_h >> l);
+        write_level(t, l, t->hwfmt, off, hw_w >> l, hw_h >> l, pal);
         off += (((uint32_t)(hw_w >> l) * (uint32_t)(hw_h >> l) * 2u) + 31u) & ~31u;
     }
+    t->pal_used = pal;
+    t->pal_gen = pal ? pal->gen : 0;
     t->dirty = 0;
+    dgl_gl.dirty |= DGL_DIRTY_TEXTURE;               /* new VRAM offsets or format for the emitter */
     return 0;
 }

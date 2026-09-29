@@ -9,7 +9,7 @@ enum { DGL_TW15 = 2, DGL_TW16 = 3, DGL_TW12 = 4 };
 enum { DGL_ALPHA_OPAQUE, DGL_ALPHA_BINARY, DGL_ALPHA_GRADIENT };
 /* Internal format classes (what the texture keeps of its texels). */
 enum { DGL_IF_RGBA, DGL_IF_RGB, DGL_IF_RGB5_A1, DGL_IF_LUMINANCE, DGL_IF_LUMINANCE_ALPHA, DGL_IF_ALPHA,
-       DGL_IF_INTENSITY };
+       DGL_IF_INTENSITY, DGL_IF_INDEX };
 
 /* texconv.c */
 int      dgl_alpha_class(const unsigned char *rgba, long n);
@@ -38,8 +38,20 @@ void     dgl_vram_sync_done(void);         /* the engine is idle: free the retir
 typedef struct {
     int      w, h;                 /* as uploaded */
     int      ifc;                  /* internal format class, DGL_IF_* */
+    GLint    ifmt;                 /* the internal format as given */
     unsigned char *rgba;           /* shadow copy, RGBA8, already reduced to the class */
+    unsigned char *idx;            /* DGL_IF_INDEX instead: the colour indices */
 } dgl_level;
+#define DGL_LEVEL_DEFINED(L) ((L)->rgba || (L)->idx)
+
+/* A colour table (palette.c): 256 entries at most, reduced to its internal
+ * format; gen changes with every load. */
+typedef struct {
+    unsigned char rgba[256 * 4];
+    int      width;                 /* entries, a power of two; 0 = none */
+    GLenum   ifmt;
+    unsigned gen;
+} dgl_palette;
 
 typedef struct dgl_texture {
     GLuint   name;
@@ -53,6 +65,9 @@ typedef struct dgl_texture {
     uint32_t vram_off, level_off[DGL_MAX_LEVELS], vram_size;
     int      hw_w_log2, hw_h_log2;  /* level 0 as stored (>= 8 texels) */
     uint32_t drawn;                 /* dgl_sync_epoch + 1 when last drawn, 0 = never */
+    dgl_palette *own;               /* its GL_TEXTURE_2D colour table, if loaded */
+    const dgl_palette *pal_used;    /* the palette and generation the VRAM copy was expanded with */
+    unsigned pal_gen;
 } dgl_texture;
 
 /* Engine syncs (texture.c): dgl_sync waits for the engine to go idle and
@@ -72,6 +87,12 @@ typedef struct {
 extern dgl_tex_counts dgl_texc;
 
 dgl_texture *dgl_bound_texture(void);           /* NULL when none or texture 0 */
+dgl_palette *dgl_bound_palette(void);           /* the bound texture's own table (created) */
+
+/* palette.c */
+void dgl_palettes_reset(void);
+const dgl_palette *dgl_palette_for(const dgl_texture *t);           /* shared or its own */
+const unsigned char *dgl_palette_texel(const dgl_palette *p, unsigned i);
 int  dgl_texture_ready(dgl_texture *t);         /* upload if needed; 0 = drawable */
 void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end);
 int  dgl_white_texture(uint32_t *off);          /* resident 8x8 white TW16 */
