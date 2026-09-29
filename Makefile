@@ -57,7 +57,7 @@ $(LIB): $(DGL_SRCS:%.c=build/djgpp/%.o) $(GEN_SRCS:%.c=build/djgpp/%.o) $(HAL_SR
 lib: $(LIB)
 
 # Examples: one directory each, linked with the guest test shim (HX- lines).
-EXAMPLES := hello probe clear tri cube texcube
+EXAMPLES := hello probe clear tri cube texcube g4exp
 build/exe/%.EXE: $(LIB) $(MGAHAL)/tests/shim/hx.c
 	@mkdir -p $(dir $@)
 	$(Q)echo "  DJLD    $@"
@@ -70,6 +70,7 @@ build/exe/CLEAR.EXE: $(wildcard examples/clear/*.c) src/dgl/dgl.h
 build/exe/TRI.EXE: $(wildcard examples/tri/*.c) src/dgl/dgl.h
 build/exe/CUBE.EXE: $(wildcard examples/cube/*.c)
 build/exe/TEXCUBE.EXE: $(wildcard examples/texcube/*.c)
+build/exe/G4EXP.EXE: $(wildcard examples/g4exp/*.c) src/dgl/dgl.h src/gl/gl_tex.h
 examples: $(foreach e,$(EXAMPLES),build/exe/$(shell echo $(e) | tr a-z A-Z).EXE)
 
 # Conformance tests (tests/conform, D16): DOS builds against libGL.a and

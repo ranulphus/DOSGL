@@ -14,6 +14,7 @@
 #include "mga/regs_mga.h"
 #include "mga/setup.h"
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 int dgl_stage_word(int stage, GLenum env, const dgl_texture *t, const GLfloat *env_color, uint32_t *w);
@@ -28,6 +29,12 @@ static int map0_unit;                 /* the GL unit whose coordinates feed map 
 static int map1_copy;                 /* map 1 repeats map 0 (a one-texture combiner mode needing dualtex) */
 static float tex_scale_s = 1, tex_scale_t = 1;   /* logical / stored size (small textures are widened to 8) */
 static float tex_scale_s1 = 1, tex_scale_t1 = 1;
+/* Silicon experiments (docs/silicon-experiments.md): DGL_COMBINER=1 draws
+ * every environment with the G400's combiner, the legacy modulate off (as
+ * Mesa does); DGL_TC2_EXTRA=hex ORs bits into every TEXCTL2 (bit 15, which
+ * the Linux and X.org drivers always set on the G400). */
+static int force_combiner;
+static uint32_t tc2_extra;
 static int skip_all;                  /* depth or alpha function NEVER, or no context */
 static float tri_offset;              /* glPolygonOffset for the triangle being drawn (depth steps) */
 static float guard_x, guard_y;
@@ -197,7 +204,7 @@ static void validate(void)
             GLenum env = dgl_tex_env_mode(unit0);
             textured = 1;
             sampler(&tstate, tex, &tex_scale_s, &tex_scale_t);
-            if (mga.has_dual_tex && (tex1 || dgl_env_needs_combiner(env, tex))) {
+            if (mga.has_dual_tex && (tex1 || force_combiner || dgl_env_needs_combiner(env, tex))) {
                 /* G400: the combiner does the environments (Mesa's words);
                  * the legacy modulate stays off. */
                 w0 = stage_word(0, env, tex, dgl_tex_env_color(unit0));
@@ -243,6 +250,8 @@ static void validate(void)
         tctx.tex_th = tstate.h_log2;
         tctx.tex_tw1 = tstate1.w_log2;
         tctx.tex_th1 = tstate1.h_log2;
+        tstate.texctl2 |= tc2_extra;
+        tstate1.texctl2 |= tc2_extra;
         tctx.texctl2_1 = tstate1.texctl2 | TEXCTL2_DUALTEX;
         if (textured) {
             if (dual)
@@ -525,6 +534,10 @@ static void emit_end(void) { }
 
 void dgl_emit_install(void)
 {
+    const char *e = getenv("DGL_COMBINER");
+    force_combiner = e && *e && *e != '0';
+    e = getenv("DGL_TC2_EXTRA");
+    tc2_extra = e && *e && mga.has_dual_tex ? (uint32_t)strtoul(e, NULL, 16) : 0;
     dgl_sink.begin = emit_begin;
     dgl_sink.triangle = emit_triangle;
     dgl_sink.line = emit_line;

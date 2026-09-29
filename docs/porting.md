@@ -55,6 +55,10 @@ dglShutdown();
     `DGL_SNAPDIR` (default `C:\OUT`) as `F00100.PPM`...; a timedemo draws
     every frame, so these are the same pictures on every card and run.
     `dglSnapshot(path)` does the same on demand.
+  - For the silicon experiments (`docs/silicon-experiments.md`), on the
+    G400/G450 only: `DGL_COMBINER=1` draws single textures through the
+    texture-stage combiner (as Mesa does) instead of the legacy modulate,
+    and `DGL_TC2_EXTRA=8000` (hex) ORs those bits into every TEXCTL2.
   - The first 16 GL errors are logged as `DGL-GLERR <code> at <address>`
     (the address is inside the GL function that raised it; look it up in
     the program's link map).
