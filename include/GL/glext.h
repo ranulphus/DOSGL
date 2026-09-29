@@ -152,6 +152,46 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+/* GL_ARB_multitexture (G400 and G450) */
+void APIENTRY glActiveTextureARB(GLenum target);
+void APIENTRY glClientActiveTextureARB(GLenum target);
+void APIENTRY glMultiTexCoord1dARB(GLenum target, GLdouble s);
+void APIENTRY glMultiTexCoord1dvARB(GLenum target, const GLdouble *v);
+void APIENTRY glMultiTexCoord2dARB(GLenum target, GLdouble s, GLdouble t);
+void APIENTRY glMultiTexCoord2dvARB(GLenum target, const GLdouble *v);
+void APIENTRY glMultiTexCoord3dARB(GLenum target, GLdouble s, GLdouble t, GLdouble r);
+void APIENTRY glMultiTexCoord3dvARB(GLenum target, const GLdouble *v);
+void APIENTRY glMultiTexCoord4dARB(GLenum target, GLdouble s, GLdouble t, GLdouble r, GLdouble q);
+void APIENTRY glMultiTexCoord4dvARB(GLenum target, const GLdouble *v);
+void APIENTRY glMultiTexCoord1fARB(GLenum target, GLfloat s);
+void APIENTRY glMultiTexCoord1fvARB(GLenum target, const GLfloat *v);
+void APIENTRY glMultiTexCoord2fARB(GLenum target, GLfloat s, GLfloat t);
+void APIENTRY glMultiTexCoord2fvARB(GLenum target, const GLfloat *v);
+void APIENTRY glMultiTexCoord3fARB(GLenum target, GLfloat s, GLfloat t, GLfloat r);
+void APIENTRY glMultiTexCoord3fvARB(GLenum target, const GLfloat *v);
+void APIENTRY glMultiTexCoord4fARB(GLenum target, GLfloat s, GLfloat t, GLfloat r, GLfloat q);
+void APIENTRY glMultiTexCoord4fvARB(GLenum target, const GLfloat *v);
+void APIENTRY glMultiTexCoord1iARB(GLenum target, GLint s);
+void APIENTRY glMultiTexCoord1ivARB(GLenum target, const GLint *v);
+void APIENTRY glMultiTexCoord2iARB(GLenum target, GLint s, GLint t);
+void APIENTRY glMultiTexCoord2ivARB(GLenum target, const GLint *v);
+void APIENTRY glMultiTexCoord3iARB(GLenum target, GLint s, GLint t, GLint r);
+void APIENTRY glMultiTexCoord3ivARB(GLenum target, const GLint *v);
+void APIENTRY glMultiTexCoord4iARB(GLenum target, GLint s, GLint t, GLint r, GLint q);
+void APIENTRY glMultiTexCoord4ivARB(GLenum target, const GLint *v);
+void APIENTRY glMultiTexCoord1sARB(GLenum target, GLshort s);
+void APIENTRY glMultiTexCoord1svARB(GLenum target, const GLshort *v);
+void APIENTRY glMultiTexCoord2sARB(GLenum target, GLshort s, GLshort t);
+void APIENTRY glMultiTexCoord2svARB(GLenum target, const GLshort *v);
+void APIENTRY glMultiTexCoord3sARB(GLenum target, GLshort s, GLshort t, GLshort r);
+void APIENTRY glMultiTexCoord3svARB(GLenum target, const GLshort *v);
+void APIENTRY glMultiTexCoord4sARB(GLenum target, GLshort s, GLshort t, GLshort r, GLshort q);
+void APIENTRY glMultiTexCoord4svARB(GLenum target, const GLshort *v);
+/* GL_SGIS_multitexture names */
+void APIENTRY glSelectTextureSGIS(GLenum target);
+void APIENTRY glSelectTextureCoordSetSGIS(GLenum target);
+void APIENTRY glMTexCoord2fSGIS(GLenum target, GLfloat s, GLfloat t);
+void APIENTRY glMTexCoord2fvSGIS(GLenum target, const GLfloat *v);
 /* GL_EXT_paletted_texture */
 void APIENTRY glColorTableEXT(GLenum target, GLenum internalformat, GLsizei width, GLenum format, GLenum type,
                               const GLvoid *table);

@@ -16,12 +16,18 @@
 #include <math.h>
 #include <string.h>
 
-GLenum dgl_tex_env_mode(void);
+int dgl_stage_word(int stage, GLenum env, const dgl_texture *t, const GLfloat *env_color, uint32_t *w);
+int dgl_env_needs_combiner(GLenum env, const dgl_texture *t);
+int dgl_texture_units(void);
 
 static mga_tri_ctx tctx;
-static mga_texstate tstate;
+static mga_texstate tstate, tstate1;  /* hardware maps 0 and 1 */
 static int textured;                  /* 0 none, 1 the bound texture, 2 the white texture (fog) */
+static int dual;                      /* G400: both maps in use (MGA_S_TEX2) */
+static int map0_unit;                 /* the GL unit whose coordinates feed map 0 */
+static int map1_copy;                 /* map 1 repeats map 0 (a one-texture combiner mode needing dualtex) */
 static float tex_scale_s = 1, tex_scale_t = 1;   /* logical / stored size (small textures are widened to 8) */
+static float tex_scale_s1 = 1, tex_scale_t1 = 1;
 static int skip_all;                  /* depth or alpha function NEVER, or no context */
 static float tri_offset;              /* glPolygonOffset for the triangle being drawn (depth steps) */
 static float guard_x, guard_y;
@@ -98,11 +104,55 @@ static void scissor_rows(int *x0, int *y0, int *x1, int *y1)
     }
 }
 
+/* A map's sampler from a texture object. */
+static void sampler(mga_texstate *ts, const dgl_texture *tex, float *scale_s, float *scale_t)
+{
+    int k;
+    memset(ts, 0, sizeof *ts);
+    ts->org = tex->level_off[0];
+    ts->mip_n = tex->hw_levels > 1 ? tex->hw_levels : 0;
+    for (k = 0; k < tex->hw_levels && k < 5; k++)
+        ts->mip_org[k] = tex->level_off[k];
+    ts->w_log2 = tex->hw_w_log2;
+    ts->h_log2 = tex->hw_h_log2;
+    *scale_s = (float)tex->level[0].w / (float)(1 << tex->hw_w_log2);
+    *scale_t = (float)tex->level[0].h / (float)(1 << tex->hw_h_log2);
+    ts->pitch = 1 << tex->hw_w_log2;
+    ts->hwfmt = (uint32_t)tex->hwfmt;
+    ts->clamp_u = tex->wrap_s != GL_REPEAT;      /* CLAMP behaves as CLAMP_TO_EDGE */
+    ts->clamp_v = tex->wrap_t != GL_REPEAT;
+    ts->bilinear = tex->mag_filter == GL_LINEAR || tex->min_filter == GL_LINEAR ||
+                   tex->min_filter == GL_LINEAR_MIPMAP_NEAREST || tex->min_filter == GL_LINEAR_MIPMAP_LINEAR;
+    ts->trilinear = ts->mip_n > 1 && (tex->min_filter == GL_NEAREST_MIPMAP_LINEAR ||
+                                      tex->min_filter == GL_LINEAR_MIPMAP_LINEAR);
+}
+
+/* A stage's combiner word; an environment the combiner cannot do in one
+ * stage (GL_BLEND with a colour) is drawn as GL_MODULATE, logged once. */
+static uint32_t stage_word(int stage, GLenum env, const dgl_texture *t, const GLfloat *color)
+{
+    static int warned;
+    uint32_t w = 0;
+    if (!dgl_stage_word(stage, env, t, color, &w)) {
+        if (!warned++)
+            DGL_WARN("DGL-WARN env 0x%x with this colour is drawn as GL_MODULATE", (unsigned)env);
+        dgl_stage_word(stage, GL_MODULATE, t, color, &w);
+    }
+    return w;
+}
+
 static void validate(void)
 {
     int depth = dgl_gl.depth_test && dgl_ctx.z_off;
     uint32_t alphactrl, zmode = depth ? zmode_for(dgl_gl.depth_func) : DWG_ZMODE_NOZCMP, asel;
-    dgl_texture *tex = dgl_gl.texture_2d ? dgl_bound_texture() : NULL;
+    dgl_texture *tex = dgl_gl.texture_2d ? dgl_unit_texture(0) : NULL;
+    dgl_texture *tex1 = dgl_gl.texture_2d1 && dgl_texture_units() > 1 ? dgl_unit_texture(1) : NULL;
+    int unit0 = 0;
+    if (!tex && tex1) {
+        tex = tex1;                     /* GL unit 1 alone drives map 0 */
+        tex1 = NULL;
+        unit0 = 1;
+    }
     skip_all = !dgl_ctx.active || (depth && dgl_gl.depth_func == GL_NEVER) ||
                (dgl_gl.alpha_test && dgl_gl.alpha_func == GL_NEVER);
     if (dgl_gl.dirty & DGL_DIRTY_TARGET) {
@@ -120,35 +170,59 @@ static void validate(void)
     } else if (tex) {
         dgl_texture_drawn(tex);        /* busy until the next completed sync */
     }
-    if ((dgl_gl.dirty & DGL_DIRTY_TEXTURE) || !tex != (textured != 1))
+    if (tex && tex1) {
+        /* Busy, map 0's texture cannot be evicted to make room for map 1's
+         * unless a sync frees everything; then make it resident again. */
+        if (dgl_texture_ready(tex1) != 0 || dgl_texture_ready(tex) != 0) {
+            skip_all = 1;
+            tex = tex1 = NULL;
+        } else {
+            dgl_texture_drawn(tex1);
+            dgl_texture_drawn(tex);
+        }
+    }
+    if ((dgl_gl.dirty & DGL_DIRTY_TEXTURE) || !tex != (textured != 1) || (tex1 != NULL) != (dual && !map1_copy) ||
+        unit0 != map0_unit)
         dgl_gl.dirty |= DGL_DIRTY_RASTER | DGL_DIRTY_TEXTURE;
     if (dgl_gl.dirty & (DGL_DIRTY_RASTER | DGL_DIRTY_FOG | DGL_DIRTY_TARGET | DGL_DIRTY_TEXTURE)) {
-        uint32_t white;
+        uint32_t white, w0 = 0, w1 = 0;
         memset(&tstate, 0, sizeof tstate);
         textured = 0;
+        dual = map1_copy = 0;
+        map0_unit = unit0;
         asel = ALPHASEL_DIFFUSE;
         if (tex) {
-            int k;
-            GLenum env = dgl_tex_env_mode();
+            GLenum env = dgl_tex_env_mode(unit0);
             textured = 1;
-            tstate.org = tex->level_off[0];
-            tstate.mip_n = tex->hw_levels > 1 ? tex->hw_levels : 0;
-            for (k = 0; k < tex->hw_levels && k < 5; k++)
-                tstate.mip_org[k] = tex->level_off[k];
-            tstate.w_log2 = tex->hw_w_log2;
-            tstate.h_log2 = tex->hw_h_log2;
-            tex_scale_s = (float)tex->level[0].w / (float)(1 << tex->hw_w_log2);
-            tex_scale_t = (float)tex->level[0].h / (float)(1 << tex->hw_h_log2);
-            tstate.pitch = 1 << tex->hw_w_log2;
-            tstate.hwfmt = (uint32_t)tex->hwfmt;
-            tstate.clamp_u = tex->wrap_s != GL_REPEAT;      /* CLAMP behaves as CLAMP_TO_EDGE */
-            tstate.clamp_v = tex->wrap_t != GL_REPEAT;
-            tstate.modulate = env == GL_MODULATE;
-            tstate.bilinear = tex->mag_filter == GL_LINEAR || tex->min_filter == GL_LINEAR ||
-                              tex->min_filter == GL_LINEAR_MIPMAP_NEAREST || tex->min_filter == GL_LINEAR_MIPMAP_LINEAR;
-            tstate.trilinear = tstate.mip_n > 1 && (tex->min_filter == GL_NEAREST_MIPMAP_LINEAR ||
-                                                    tex->min_filter == GL_LINEAR_MIPMAP_LINEAR);
-            asel = env == GL_MODULATE ? ALPHASEL_MODULATED : ALPHASEL_TEXTURE;
+            sampler(&tstate, tex, &tex_scale_s, &tex_scale_t);
+            if (mga.has_dual_tex && (tex1 || dgl_env_needs_combiner(env, tex))) {
+                /* G400: the combiner does the environments (Mesa's words);
+                 * the legacy modulate stays off. */
+                w0 = stage_word(0, env, tex, dgl_tex_env_color(unit0));
+                if (tex1) {
+                    sampler(&tstate1, tex1, &tex_scale_s1, &tex_scale_t1);
+                    w1 = stage_word(1, dgl_tex_env_mode(1), tex1, dgl_tex_env_color(1));
+                    dual = 1;
+                } else if (w0 & (1u << 20)) {
+                    /* The blend mode (GL_DECAL on alpha) needs dualtex: map 1
+                     * repeats map 0 and stage 1 passes stage 0 through. */
+                    tstate1 = tstate;
+                    tex_scale_s1 = tex_scale_s;
+                    tex_scale_t1 = tex_scale_t;
+                    w1 = 0x43200003u;
+                    dual = map1_copy = 1;
+                } else
+                    w1 = w0;                /* single texturing: stage 1 as stage 0 */
+                asel = ALPHASEL_TEXTURE;    /* the combiner's alpha */
+            } else {
+                static int warned;
+                if (env == GL_BLEND && !warned++)
+                    DGL_WARN("DGL-WARN GL_BLEND is drawn as GL_MODULATE on this card");
+                tstate.modulate = env == GL_MODULATE || env == GL_BLEND;
+                if (env == GL_DECAL && dgl_env_needs_combiner(env, tex) && mga.has_decalblend)
+                    tstate.texctl2 |= TEXCTL2_DECALBLEND;   /* G200: blend by texel alpha */
+                asel = tstate.modulate ? ALPHASEL_MODULATED : ALPHASEL_TEXTURE;
+            }
         } else if (dgl_gl.fog && dgl_white_texture(&white) == 0) {
             /* The engine fogs only textured trapezoids (in 86Box, and on the
              * G100): untextured fogged draws sample a white texel. */
@@ -162,11 +236,20 @@ static void validate(void)
         }
         tctx.dwgctl = (textured ? DWG_OPCOD_TEXTURE_TRAP : DWG_OPCOD_TRAP) | zmode | DWG_BOP_COPY |
                       ((depth && dgl_gl.depth_mask) ? DWG_ATYPE_ZI : DWG_ATYPE_I);
-        tctx.flags = MGA_S_COLOR | (depth ? MGA_S_Z : 0) | (textured ? MGA_S_TEX : 0);
+        tctx.flags = MGA_S_COLOR | (depth ? MGA_S_Z : 0) | (textured ? MGA_S_TEX : 0) | (dual ? MGA_S_TEX2 : 0);
         tctx.tex_tw = tstate.w_log2;
         tctx.tex_th = tstate.h_log2;
-        if (textured)
-            tex_emit(&tstate);
+        tctx.tex_tw1 = tstate1.w_log2;
+        tctx.tex_th1 = tstate1.h_log2;
+        tctx.texctl2_1 = tstate1.texctl2 | TEXCTL2_DUALTEX;
+        if (textured) {
+            if (dual)
+                tex_emit_dual(&tstate, &tstate1);
+            else
+                tex_emit(&tstate);
+            if (mga.has_dual_tex)
+                tex_emit_combiner(w0, w1);  /* zero words pass the legacy result through */
+        }
         if (mga.has_alpha_blend) {
             alphactrl = ALPHACTRL_ALPHASEL(asel);
             if (dgl_gl.blend)
@@ -247,8 +330,17 @@ static void project(const dgl_cvtx *c, proj *p)
     p->v.fog = dgl_gl.fog ? 255.0f * fog_factor(c->eye_d) : 255.0f;
     /* Texture coordinates for the setup: normalised s, t times q = 1/w. */
     p->v.q = (float)iw;
-    p->v.s = (float)(c->s * tex_scale_s * iw);
-    p->v.t = (float)(c->t * tex_scale_t * iw);
+    if (map0_unit) {                            /* GL unit 1 alone feeds map 0 */
+        p->v.s = (float)(c->s1 * tex_scale_s * iw);
+        p->v.t = (float)(c->t1 * tex_scale_t * iw);
+    } else {
+        p->v.s = (float)(c->s * tex_scale_s * iw);
+        p->v.t = (float)(c->t * tex_scale_t * iw);
+    }
+    if (dual) {
+        p->v.s1 = (float)((map1_copy ? p->v.s / tex_scale_s * tex_scale_s1 : c->s1 * tex_scale_s1 * iw));
+        p->v.t1 = (float)((map1_copy ? p->v.t / tex_scale_t * tex_scale_t1 : c->t1 * tex_scale_t1 * iw));
+    }
 }
 
 static void clamp_colour(mga_svtx *v)
@@ -269,6 +361,8 @@ static void draw_projected(const proj *p0, const proj *p1, const proj *p2)
     }
     if (textured)
         tex_adjust_coords(&a, &b, &c, &tstate);
+    if (dual)
+        tex_adjust_coords1(&a, &b, &c, &tstate1);
     setup_triangle(&a, &b, &c, &tctx);
 }
 
@@ -284,7 +378,7 @@ static void draw_projected(const proj *p0, const proj *p1, const proj *p2)
 static void mid(dgl_cvtx *o, const dgl_cvtx *a, const dgl_cvtx *b)
 {
 #define M(f) o->f = 0.5f * (a->f + b->f)
-    M(x); M(y); M(z); M(w); M(r); M(g); M(b); M(a); M(s); M(t); M(eye_d);
+    M(x); M(y); M(z); M(w); M(r); M(g); M(b); M(a); M(s); M(t); M(s1); M(t1); M(eye_d);
 #undef M
 }
 

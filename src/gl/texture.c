@@ -22,16 +22,20 @@
 #define WINDOW_LEVELS 5
 
 static dgl_texture *tex[MAX_TEXTURES];
-static GLuint bound;                     /* name bound to GL_TEXTURE_2D */
+static GLuint bound_u[2];                /* names bound to GL_TEXTURE_2D, per texture unit */
+#define bound (bound_u[dgl_gl.active_unit])   /* the active unit's */
 static uint32_t white_off;
 static int white_ok;
-static GLenum env_mode = GL_MODULATE;
-static GLfloat env_color[4];            /* GL_TEXTURE_ENV_COLOR */
+static GLenum env_mode_u[2] = { GL_MODULATE, GL_MODULATE };
+static GLfloat env_color_u[2][4];       /* GL_TEXTURE_ENV_COLOR */
+#define env_mode (env_mode_u[dgl_gl.active_unit])
+#define env_color (env_color_u[dgl_gl.active_unit])
 
 uint32_t dgl_sync_epoch;
 dgl_tex_counts dgl_texc;
 
-GLenum dgl_tex_env_mode(void) { return env_mode; }
+GLenum dgl_tex_env_mode(int unit) { return env_mode_u[unit]; }
+const GLfloat *dgl_tex_env_color(int unit) { return env_color_u[unit]; }
 
 int dgl_sync(void)
 {
@@ -135,10 +139,10 @@ void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end)
     GLuint i;
     for (i = 0; i < MAX_TEXTURES; i++)
         destroy(i);
-    bound = 0;
+    bound_u[0] = bound_u[1] = 0;
     dgl_palettes_reset();
-    env_mode = GL_MODULATE;
-    memset(env_color, 0, sizeof env_color);
+    env_mode_u[0] = env_mode_u[1] = GL_MODULATE;
+    memset(env_color_u, 0, sizeof env_color_u);
     dgl_vram_init(heap_start, heap_end);
     white_ok = dgl_vram_alloc(8 * 8 * 2, &white_off) == 0;
     if (white_ok) {
@@ -154,9 +158,9 @@ int dgl_white_texture(uint32_t *off)
     return white_ok ? 0 : -1;
 }
 
-dgl_texture *dgl_bound_texture(void)
+dgl_texture *dgl_unit_texture(int unit)
 {
-    dgl_texture *t = get(bound, 0);
+    dgl_texture *t = get(bound_u[unit], 0);
     return t && DGL_LEVEL_DEFINED(&t->level[0]) ? t : NULL;
 }
 
@@ -201,8 +205,9 @@ void APIENTRY glDeleteTextures(GLsizei n, const GLuint *names)
     for (i = 0; i < n; i++) {
         if (!names[i] || names[i] >= MAX_TEXTURES)
             continue;
-        if (names[i] == bound) {
-            bound = 0;
+        if (names[i] == bound_u[0] || names[i] == bound_u[1]) {
+            if (names[i] == bound_u[0]) bound_u[0] = 0;
+            if (names[i] == bound_u[1]) bound_u[1] = 0;
             dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
         }
         destroy(names[i]);
@@ -346,9 +351,12 @@ static void env(GLenum target, GLenum pname, const GLfloat *v)
     switch (pname) {
     case GL_TEXTURE_ENV_MODE:
         mode = (GLint)v[0];
-        /* GL_BLEND (and GL_ADD) need the combiner work that comes with dual
-         * texturing; until then they are refused rather than drawn wrongly. */
-        if (mode != GL_MODULATE && mode != GL_REPLACE && mode != GL_DECAL) { dgl_gl_error(GL_INVALID_ENUM); return; }
+        /* GL_BLEND is drawn by the G400's combiner (with a black environment
+         * colour; otherwise as GL_MODULATE, logged); GL_ADD is not GL 1.1. */
+        if (mode != GL_MODULATE && mode != GL_REPLACE && mode != GL_DECAL && mode != GL_BLEND) {
+            dgl_gl_error(GL_INVALID_ENUM);
+            return;
+        }
         env_mode = (GLenum)mode;
         break;
     case GL_TEXTURE_ENV_COLOR:
@@ -526,9 +534,21 @@ static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
     const dgl_level *L = &t->level[level];
     const dgl_palette *pal = L->idx ? dgl_palette_for(t) : NULL;
     int hw_w, j, i, cls = DGL_ALPHA_OPAQUE;
-    if (!t->resident || t->dirty || dgl_texture_busy(t) || level >= t->hw_levels ||
+    if (!t->resident || t->dirty || level >= t->hw_levels ||
         t->level[0].w < 8 || t->level[0].h < 8 || (pal && (t->pal_used != pal || t->pal_gen != pal->gen)))
         return 0;
+    if (dgl_texture_busy(t)) {
+        /* Queued draws may still read it. A small rectangle is cheaper to
+         * write after waiting for the engine than the whole texture is to
+         * re-upload elsewhere (GLQuake's multitexture path updates a
+         * lightmap page between the surfaces that use it). Writing the
+         * rectangle through the engine (ILOAD) would avoid both: plan Q6. */
+        if ((long)w * h * 4 > (long)L->w * L->h)
+            return 0;
+        if (dgl_sync() != 0)
+            return 0;
+        dgl_texc.sub_sync++;
+    }
     for (j = 0; j < h && cls <= fits[t->hwfmt]; j++) {
         int c = texels_class(L, pal, (size_t)(y + j) * L->w + x, w);
         if (c > cls)

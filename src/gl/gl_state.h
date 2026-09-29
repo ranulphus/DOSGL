@@ -39,18 +39,22 @@ typedef struct {
     float x, y, z, w;
     float r, g, b, a;
     float s, t;
+    float s1, t1;                      /* texture unit 1 (GL_ARB_multitexture) */
     float eye_d;
 } dgl_cvtx;
 
 typedef struct {
     /* Matrices */
     GLenum      matrix_mode;
-    dgl_mstack  mv, proj, tex;
-    dgl_mat4    mv_stack[DGL_MV_DEPTH], proj_stack[DGL_PROJ_DEPTH], tex_stack[DGL_TEX_DEPTH];
+    dgl_mstack  mv, proj, tex, tex1;
+    dgl_mat4    mv_stack[DGL_MV_DEPTH], proj_stack[DGL_PROJ_DEPTH], tex_stack[DGL_TEX_DEPTH],
+                tex1_stack[DGL_TEX_DEPTH];
     dgl_mat4    mvp;                   /* proj * mv, valid unless DGL_DIRTY_MVP */
-    int         tex_identity;          /* texture matrix is the identity */
+    int         tex_identity, tex1_identity;   /* texture matrices are the identity */
     /* Enables */
     int depth_test, cull_face, blend, alpha_test, fog, scissor_test, texture_2d, dither;
+    int texture_2d1;                   /* GL_TEXTURE_2D on texture unit 1 */
+    int active_unit, client_unit;      /* GL_ARB_multitexture: 0 or 1 */
     /* Raster state */
     GLenum  depth_func, blend_src, blend_dst, alpha_func, cull_mode, front_face, shade_model;
     GLenum  fog_mode, polygon_mode;
@@ -73,8 +77,8 @@ typedef struct {
     GLuint  stencil_mask, stencil_writemask;
     GLenum  draw_buffer, read_buffer;
     /* Current vertex attributes and arrays */
-    GLfloat cur_color[4], cur_tex[2];
-    dgl_array va, ca, ta;
+    GLfloat cur_color[4], cur_tex[2], cur_tex1[2];
+    dgl_array va, ca, ta, ta1;         /* ta1: unit 1's texture coordinates */
     /* Errors */
     GLenum      error;
     unsigned    dirty;

@@ -83,11 +83,14 @@ int  dgl_sync(void);                            /* 0 = idle, -1 = timed out */
 typedef struct {
     unsigned long uploads, upload_bytes;    /* whole textures written to VRAM */
     unsigned long sub_fast, sub_full;       /* glTexSubImage2D: rectangle written / whole re-upload */
+    unsigned long sub_sync;                 /* rectangles written after waiting for the engine */
     unsigned long renames, evictions, syncs;
 } dgl_tex_counts;
 extern dgl_tex_counts dgl_texc;
 
-dgl_texture *dgl_bound_texture(void);           /* NULL when none or texture 0 */
+dgl_texture *dgl_unit_texture(int unit);        /* a unit's bound texture; NULL when none or incomplete */
+GLenum dgl_tex_env_mode(int unit);
+const GLfloat *dgl_tex_env_color(int unit);
 dgl_palette *dgl_bound_palette(void);           /* the bound texture's own table (created) */
 
 /* palette.c */

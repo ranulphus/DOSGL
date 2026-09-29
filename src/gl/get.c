@@ -48,14 +48,18 @@ static int query(GLenum p, double *v)
     case GL_UNPACK_ALIGNMENT: v[0] = dgl_gl.unpack_align; return 1;
     case GL_MODELVIEW_MATRIX: m = &dgl_gl.mv.stack[dgl_gl.mv.depth - 1]; break;
     case GL_PROJECTION_MATRIX: m = &dgl_gl.proj.stack[dgl_gl.proj.depth - 1]; break;
-    case GL_TEXTURE_MATRIX: m = &dgl_gl.tex.stack[dgl_gl.tex.depth - 1]; break;
+    case GL_TEXTURE_MATRIX:
+        m = dgl_gl.active_unit ? &dgl_gl.tex1.stack[dgl_gl.tex1.depth - 1] : &dgl_gl.tex.stack[dgl_gl.tex.depth - 1];
+        break;
     case GL_CULL_FACE: v[0] = dgl_gl.cull_face; return 1;
     case GL_DEPTH_TEST: v[0] = dgl_gl.depth_test; return 1;
     case GL_BLEND: v[0] = dgl_gl.blend; return 1;
     case GL_ALPHA_TEST: v[0] = dgl_gl.alpha_test; return 1;
     case GL_FOG: v[0] = dgl_gl.fog; return 1;
     case GL_SCISSOR_TEST: v[0] = dgl_gl.scissor_test; return 1;
-    case GL_TEXTURE_2D: v[0] = dgl_gl.texture_2d; return 1;
+    case GL_TEXTURE_2D: v[0] = dgl_gl.active_unit ? dgl_gl.texture_2d1 : dgl_gl.texture_2d; return 1;
+    case GL_ACTIVE_TEXTURE_ARB: v[0] = GL_TEXTURE0_ARB + dgl_gl.active_unit; return 1;
+    case GL_CLIENT_ACTIVE_TEXTURE_ARB: v[0] = GL_TEXTURE0_ARB + dgl_gl.client_unit; return 1;
     case GL_TEXTURE_BINDING_2D: { extern GLuint dgl_bound_name(void); v[0] = dgl_bound_name(); return 1; }
     case GL_DITHER: v[0] = dgl_gl.dither; return 1;
     case GL_POLYGON_OFFSET_FILL: v[0] = dgl_gl.offset_fill; return 1;
@@ -63,7 +67,7 @@ static int query(GLenum p, double *v)
     case GL_SHARED_TEXTURE_PALETTE_EXT: v[0] = dgl_gl.shared_palette; return 1;
     case GL_VERTEX_ARRAY: v[0] = dgl_gl.va.enabled; return 1;
     case GL_COLOR_ARRAY: v[0] = dgl_gl.ca.enabled; return 1;
-    case GL_TEXTURE_COORD_ARRAY: v[0] = dgl_gl.ta.enabled; return 1;
+    case GL_TEXTURE_COORD_ARRAY: v[0] = (dgl_gl.client_unit ? dgl_gl.ta1 : dgl_gl.ta).enabled; return 1;
     case GL_POLYGON_MODE: v[0] = v[1] = dgl_gl.polygon_mode; return 2;
     /* The framebuffer DOS-GL has (16-bit RGB, no stencil, accumulation or aux buffers). */
     case GL_RGBA_MODE: case GL_SUBPIXEL_BITS: v[0] = p == GL_RGBA_MODE ? 1 : 4; return 1;
@@ -93,16 +97,20 @@ static int query(GLenum p, double *v)
     case GL_PACK_SWAP_BYTES: case GL_PACK_LSB_FIRST:
         v[0] = 0; return 1;
     case GL_CURRENT_COLOR: for (i = 0; i < 4; i++) v[i] = dgl_gl.cur_color[i]; return 4;
-    case GL_CURRENT_TEXTURE_COORDS: v[0] = dgl_gl.cur_tex[0]; v[1] = dgl_gl.cur_tex[1]; v[2] = 0; v[3] = 1; return 4;
+    case GL_CURRENT_TEXTURE_COORDS: {
+        const GLfloat *c = dgl_gl.active_unit ? dgl_gl.cur_tex1 : dgl_gl.cur_tex;
+        v[0] = c[0]; v[1] = c[1]; v[2] = 0; v[3] = 1;
+        return 4;
+    }
     case GL_MODELVIEW_STACK_DEPTH: v[0] = dgl_gl.mv.depth; return 1;
     case GL_PROJECTION_STACK_DEPTH: v[0] = dgl_gl.proj.depth; return 1;
-    case GL_TEXTURE_STACK_DEPTH: v[0] = dgl_gl.tex.depth; return 1;
+    case GL_TEXTURE_STACK_DEPTH: v[0] = dgl_gl.active_unit ? dgl_gl.tex1.depth : dgl_gl.tex.depth; return 1;
     case GL_LIST_BASE: { extern GLuint dgl_list_base(void); v[0] = dgl_list_base(); return 1; }
     case GL_MAX_LIST_NESTING: v[0] = 64; return 1;
     case GL_MAX_LIGHTS: v[0] = 8; return 1;
     case GL_MAX_CLIP_PLANES: v[0] = 6; return 1;
     case GL_MAX_ATTRIB_STACK_DEPTH: case GL_MAX_CLIENT_ATTRIB_STACK_DEPTH: v[0] = 16; return 1;
-    case GL_MAX_TEXTURE_UNITS_ARB: v[0] = 1; return 1;
+    case GL_MAX_TEXTURE_UNITS_ARB: { extern int dgl_texture_units(void); v[0] = dgl_texture_units(); return 1; }
     case GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: v[0] = 1; return 1;
     default: return 0;
     }
@@ -145,7 +153,7 @@ void APIENTRY glGetPointerv(GLenum p, GLvoid **out)
     switch (p) {
     case GL_VERTEX_ARRAY_POINTER: *out = (GLvoid *)dgl_gl.va.ptr; break;
     case GL_COLOR_ARRAY_POINTER: *out = (GLvoid *)dgl_gl.ca.ptr; break;
-    case GL_TEXTURE_COORD_ARRAY_POINTER: *out = (GLvoid *)dgl_gl.ta.ptr; break;
+    case GL_TEXTURE_COORD_ARRAY_POINTER: *out = (GLvoid *)(dgl_gl.client_unit ? dgl_gl.ta1 : dgl_gl.ta).ptr; break;
     default: *out = NULL; dgl_gl_error(GL_INVALID_ENUM);
     }
 }
@@ -162,9 +170,13 @@ void APIENTRY glGetBooleanv(GLenum p, GLboolean *out)
 /* Every name ends in a space, as programs that search for "NAME " expect. */
 static const char *extensions(void)
 {
-    return "GL_EXT_bgra "
-           "GL_EXT_texture_edge_clamp GL_SGIS_texture_edge_clamp "
-           "GL_EXT_paletted_texture GL_EXT_shared_texture_palette ";
+    return mga.has_dual_tex ? "GL_EXT_bgra "
+                              "GL_EXT_texture_edge_clamp GL_SGIS_texture_edge_clamp "
+                              "GL_EXT_paletted_texture GL_EXT_shared_texture_palette "
+                              "GL_ARB_multitexture GL_SGIS_multitexture "
+                            : "GL_EXT_bgra "
+                              "GL_EXT_texture_edge_clamp GL_SGIS_texture_edge_clamp "
+                              "GL_EXT_paletted_texture GL_EXT_shared_texture_palette ";
 }
 
 const GLubyte *APIENTRY glGetString(GLenum name)

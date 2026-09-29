@@ -31,14 +31,14 @@ void APIENTRY glVertexPointer(GLint size, GLenum type, GLsizei stride, const GLv
 void APIENTRY glColorPointer(GLint size, GLenum type, GLsizei stride, const GLvoid *p)
 { set_array(&dgl_gl.ca, size, type, stride, p, 3, col_types); }
 void APIENTRY glTexCoordPointer(GLint size, GLenum type, GLsizei stride, const GLvoid *p)
-{ set_array(&dgl_gl.ta, size, type, stride, p, 1, pos_types); }
+{ set_array(dgl_gl.client_unit ? &dgl_gl.ta1 : &dgl_gl.ta, size, type, stride, p, 1, pos_types); }
 
 static dgl_array *client_array(GLenum a)
 {
     switch (a) {
     case GL_VERTEX_ARRAY: return &dgl_gl.va;
     case GL_COLOR_ARRAY: return &dgl_gl.ca;
-    case GL_TEXTURE_COORD_ARRAY: return &dgl_gl.ta;
+    case GL_TEXTURE_COORD_ARRAY: return dgl_gl.client_unit ? &dgl_gl.ta1 : &dgl_gl.ta;
     default: return NULL;
     }
 }
@@ -104,6 +104,15 @@ void dgl_transform(const dgl_vin *in, dgl_cvtx *o)
         o->s = (t[0] * in->tex[0] + t[4] * in->tex[1] + t[12]) / q;
         o->t = (t[1] * in->tex[0] + t[5] * in->tex[1] + t[13]) / q;
     }
+    if (dgl_gl.tex1_identity) {
+        o->s1 = in->tex1[0]; o->t1 = in->tex1[1];
+    } else {
+        const float *t = dgl_gl.tex1.stack[dgl_gl.tex1.depth - 1].m;
+        float q = t[3] * in->tex1[0] + t[7] * in->tex1[1] + t[15];
+        q = q != 0 ? q : 1;
+        o->s1 = (t[0] * in->tex1[0] + t[4] * in->tex1[1] + t[12]) / q;
+        o->t1 = (t[1] * in->tex1[0] + t[5] * in->tex1[1] + t[13]) / q;
+    }
     /* Eye distance for fog: -z_eye (PRD §7). */
     o->eye_d = dgl_gl.fog ? -(mv[2] * p[0] + mv[6] * p[1] + mv[10] * p[2] + mv[14] * p[3]) : 0.0f;
 }
@@ -126,6 +135,11 @@ void dgl_fetch_vertex(GLint i, dgl_vin *v)
         read_comps(&dgl_gl.ta, i, v->tex, 2, 0);
     } else
         memcpy(v->tex, dgl_gl.cur_tex, sizeof v->tex);
+    if (dgl_gl.ta1.enabled) {
+        v->tex1[0] = v->tex1[1] = 0;
+        read_comps(&dgl_gl.ta1, i, v->tex1, 2, 0);
+    } else
+        memcpy(v->tex1, dgl_gl.cur_tex1, sizeof v->tex1);
 }
 
 /* ---- Assembly --------------------------------------------------------- */
@@ -312,6 +326,7 @@ static void imm_vertex(float x, float y, float z, float w)
     v->pos[0] = x; v->pos[1] = y; v->pos[2] = z; v->pos[3] = w;
     memcpy(v->col, dgl_gl.cur_color, sizeof v->col);
     memcpy(v->tex, dgl_gl.cur_tex, sizeof v->tex);
+    memcpy(v->tex1, dgl_gl.cur_tex1, sizeof v->tex1);
 }
 
 void APIENTRY glEnd(void)
@@ -340,6 +355,10 @@ void APIENTRY glArrayElement(GLint i)
     if (dgl_gl.ta.enabled) {
         read_comps(&dgl_gl.ta, i, v.tex, 2, 0);
         memcpy(dgl_gl.cur_tex, v.tex, sizeof v.tex);
+    }
+    if (dgl_gl.ta1.enabled) {
+        read_comps(&dgl_gl.ta1, i, v.tex1, 2, 0);
+        memcpy(dgl_gl.cur_tex1, v.tex1, sizeof v.tex1);
     }
     if (dgl_gl.va.enabled) {
         read_comps(&dgl_gl.va, i, v.pos, 4, 0);

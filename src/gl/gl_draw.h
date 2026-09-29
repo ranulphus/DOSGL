@@ -4,7 +4,7 @@
 #include "gl_state.h"
 
 /* An input vertex: object position (x, y, z, w), colour 0..1, texcoord. */
-typedef struct { float pos[4], col[4], tex[2]; } dgl_vin;
+typedef struct { float pos[4], col[4], tex[2], tex1[2]; } dgl_vin;   /* tex1: texture unit 1 */
 
 typedef struct {
     int  (*begin)(void);        /* validate state; 0 = draw nothing */

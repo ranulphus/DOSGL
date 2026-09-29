@@ -25,7 +25,7 @@ static dgl_mstack *current(void)
 {
     switch (dgl_gl.matrix_mode) {
     case GL_PROJECTION: return &dgl_gl.proj;
-    case GL_TEXTURE:    return &dgl_gl.tex;
+    case GL_TEXTURE:    return dgl_gl.active_unit ? &dgl_gl.tex1 : &dgl_gl.tex;
     default:            return &dgl_gl.mv;
     }
 }
@@ -40,7 +40,7 @@ static void changed(void)
 {
     if (dgl_gl.matrix_mode == GL_TEXTURE) {
         static const dgl_mat4 id = { { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 } };
-        dgl_gl.tex_identity = !memcmp(top(), &id, sizeof id);
+        *(dgl_gl.active_unit ? &dgl_gl.tex1_identity : &dgl_gl.tex_identity) = !memcmp(top(), &id, sizeof id);
     } else
         dgl_gl.dirty |= DGL_DIRTY_MVP;
 }
@@ -50,11 +50,13 @@ void dgl_matrix_reset(void)
     dgl_gl.mv.stack = dgl_gl.mv_stack; dgl_gl.mv.max = DGL_MV_DEPTH; dgl_gl.mv.depth = 1;
     dgl_gl.proj.stack = dgl_gl.proj_stack; dgl_gl.proj.max = DGL_PROJ_DEPTH; dgl_gl.proj.depth = 1;
     dgl_gl.tex.stack = dgl_gl.tex_stack; dgl_gl.tex.max = DGL_TEX_DEPTH; dgl_gl.tex.depth = 1;
+    dgl_gl.tex1.stack = dgl_gl.tex1_stack; dgl_gl.tex1.max = DGL_TEX_DEPTH; dgl_gl.tex1.depth = 1;
     dgl_mat_identity(&dgl_gl.mv_stack[0]);
     dgl_mat_identity(&dgl_gl.proj_stack[0]);
     dgl_mat_identity(&dgl_gl.tex_stack[0]);
+    dgl_mat_identity(&dgl_gl.tex1_stack[0]);
     dgl_gl.matrix_mode = GL_MODELVIEW;
-    dgl_gl.tex_identity = 1;
+    dgl_gl.tex_identity = dgl_gl.tex1_identity = 1;
     dgl_gl.dirty |= DGL_DIRTY_MVP;
 }
 

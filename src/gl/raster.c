@@ -12,7 +12,7 @@ static int *cap_flag(GLenum cap)
     case GL_ALPHA_TEST:   return &dgl_gl.alpha_test;
     case GL_FOG:          return &dgl_gl.fog;
     case GL_SCISSOR_TEST: return &dgl_gl.scissor_test;
-    case GL_TEXTURE_2D:   return &dgl_gl.texture_2d;
+    case GL_TEXTURE_2D:   return dgl_gl.active_unit ? &dgl_gl.texture_2d1 : &dgl_gl.texture_2d;
     case GL_DITHER:       return &dgl_gl.dither;
     case GL_POLYGON_OFFSET_FILL: return &dgl_gl.offset_fill;
     case GL_STENCIL_TEST: return &dgl_gl.stencil_test;
@@ -54,7 +54,7 @@ GLboolean APIENTRY glIsEnabled(GLenum cap)
     switch (cap) {
     case GL_VERTEX_ARRAY:        return (GLboolean)dgl_gl.va.enabled;
     case GL_COLOR_ARRAY:         return (GLboolean)dgl_gl.ca.enabled;
-    case GL_TEXTURE_COORD_ARRAY: return (GLboolean)dgl_gl.ta.enabled;
+    case GL_TEXTURE_COORD_ARRAY: return (GLboolean)(dgl_gl.client_unit ? dgl_gl.ta1 : dgl_gl.ta).enabled;
     case GL_LIGHTING: case GL_NORMALIZE: case GL_POINT_SMOOTH: case GL_LINE_SMOOTH: case GL_POLYGON_SMOOTH:
     case GL_LINE_STIPPLE: case GL_POLYGON_STIPPLE: case GL_POLYGON_OFFSET_POINT: case GL_POLYGON_OFFSET_LINE:
     case GL_COLOR_MATERIAL: case GL_TEXTURE_1D: case GL_TEXTURE_GEN_S: case GL_TEXTURE_GEN_T:
