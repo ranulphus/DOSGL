@@ -26,8 +26,9 @@ dglSwapBuffers();
 dglShutdown();
 ```
 
-- `dglEnumModes` lists the 16-bit modes the card's BIOS offers that the
-  drawing engine can use and that fit in VRAM, before `dglInit`.
+- `dglEnumModes` lists, smallest first, the 16-bit modes the card's BIOS
+  offers and (v1.2) 320x200, 320x240, 400x300, 512x384 and 640x512,
+  which the BIOSes lack. See "Resolutions" below.
 - A crash (#GP, #PF, #UD, divide error), `exit()` or Ctrl-Break resets the
   engine and restores text mode.
 - DOS-GL maps the card with near pointers (`__djgpp_nearptr_enable`). A
@@ -62,6 +63,9 @@ dglShutdown();
     G400/G450 only: `DGL_COMBINER=1` draws single textures through the
     texture-stage combiner (as Mesa does) instead of the legacy modulate,
     and `DGL_TC2_EXTRA=8000` (hex) ORs those bits into every TEXCTL2.
+  - `DGL_ZOOM=1` shows the half-size modes zoomed instead of scaled;
+    `DGL_PRESENT=force` takes the scaled path even for the BIOS's own sizes
+    (a test switch); `DGL_SCALE_FILTER=bilinear` smooths scaled modes.
   - `DGL_GUARD_PX=n` (at most 2000, the default) clips triangles whose
     screen coordinates reach more than n pixels from the viewport's centre.
     A smaller band clips more, but keeps the edges and texture gradients the
@@ -70,6 +74,35 @@ dglShutdown();
   - The first 16 GL errors are logged as `DGL-GLERR <code> at <address>`
     (the address is inside the GL function that raised it; look it up in
     the program's link map).
+
+## Resolutions
+
+The Matrox BIOSes offer 16-bit 640x480, 800x600, 1024x768 and 1280x1024
+(1600x1200 only where the BIOS lists it). DOS-GL shows the other sizes in a
+larger BIOS mode, as the HAL's mode planner decides:
+
+| Size | Shown in | How (`DGLDeviceInfo.fit`) |
+|---|---|---|
+| 320x240, 400x300, 512x384, 640x512 | 640x480, 800x600, 1024x768, 1280x1024 | `integer`: exactly 2x; with `DGL_ZOOM=1`, `zoom`: the chip doubles lines and pixels |
+| 320x200 | 640x480 | `fill`: stretched to 4:3, as a CRT showed it |
+| the BIOS's own sizes | the same | `native` |
+
+A scaled mode draws into a render buffer; each `dglSwapBuffers` scales it
+into the hidden display buffer with the drawing engine (nearest filtering,
+or `DGLConfig.scale_filter = 2` / `DGL_SCALE_FILTER=bilinear`) and flips.
+The scaling is part of every frame's time (`DGLStats.present_us`, DGL-STAT
+`present_ms`). `glReadPixels` and snapshots read the render buffer.
+Single-buffered programs, and drawing to `GL_FRONT`, are shown at
+`glFlush`/`glFinish`. A zoomed mode draws into the display buffers and costs
+nothing extra; it stays opt-in until the bench confirms it on each card.
+`DGLMode` says which modes are `scaled` or `zoomed` and their
+`display_width`/`display_height`; after `dglInit`, `DGLDeviceInfo` gives
+the display mode and where the picture lands in it.
+
+`dglInit` sets the mode, probes VRAM and only then checks the buffers fit,
+so a BIOS that under-reports memory (Matrox's G200 BIOS says 2 MB of 8) no
+longer blocks the larger modes; `DGL_VRAM_KB` states the size for
+`dglEnumModes`' advice before the first `dglInit`.
 
 ## What differs from full OpenGL 1.1
 

@@ -590,10 +590,20 @@ void APIENTRY glClear(GLbitfield mask)
     clear(mask);
 }
 
-void APIENTRY glFlush(void) { }
+/* In a scaled mode a single-buffered program, or one drawing to GL_FRONT,
+ * sees its picture once it is scaled onto the display. */
+void APIENTRY glFlush(void)
+{
+    if (dgl_ctx.active && dgl_ctx.scaled && (!dgl_ctx.double_buffer || dgl_ctx.draw_front))
+        dgl_present_front();
+}
 
 void APIENTRY glFinish(void)
 {
-    if (dgl_ctx.active)
+    if (!dgl_ctx.active)
+        return;
+    if (dgl_ctx.scaled && (!dgl_ctx.double_buffer || dgl_ctx.draw_front))
+        dgl_present_front();
+    else
         dgl_sync();
 }

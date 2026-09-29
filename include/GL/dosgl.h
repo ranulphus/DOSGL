@@ -17,6 +17,7 @@ typedef struct {
     int refresh_hz;         /* 0 = BIOS default; VBE 3.0 only */
     int double_buffer;      /* nonzero for double buffering */
     int vsync;              /* nonzero to sync swaps to retrace */
+    int scale_filter;       /* scaled modes: 0 = default (nearest), 1 nearest, 2 bilinear (v1.2) */
 } DGLConfig;
 
 typedef struct {
@@ -26,6 +27,11 @@ typedef struct {
     int can_double_buffer;
     int vbe_mode;           /* the BIOS mode number */
     int pitch_px;           /* the pitch DOS-GL will program */
+    /* v1.2: sizes the BIOS lacks are drawn at their own size and shown in a
+       larger BIOS mode, scaled by the drawing engine at every swap (scaled)
+       or through the chip's line and pixel doubling (zoomed, DGL_ZOOM=1). */
+    int scaled, zoomed;
+    int display_width, display_height;   /* the BIOS mode on the monitor */
 } DGLMode;
 
 typedef struct {
@@ -36,18 +42,26 @@ typedef struct {
     unsigned int  fifo_depth;
     int           width, height;    /* current mode after dglInit */
     int           emulated;         /* nonzero under 86Box */
+    /* v1.2, after dglInit: the BIOS mode shown and where the picture lands
+       in it; fit is "native", "zoom", "integer", "fill" or "aspect". */
+    int           display_width, display_height;
+    int           picture_x, picture_y, picture_width, picture_height;
+    const char   *fit;
 } DGLDeviceInfo;
 
 typedef struct {
     unsigned long frames, triangles, swaps, texture_bytes, fifo_stalls;
     unsigned long stub_calls;       /* calls to GL functions DOS-GL only stubs (v1.1) */
+    unsigned long present_us;       /* scaled modes: time spent scaling frames (v1.2) */
 } DGLStats;
 
-/* The library's version string, e.g. "DOS-GL 0.1 (<build>)". */
+/* The library's version string, e.g. "DOS-GL 0.2 (<build>)". */
 const char *dglVersion(void);
 
 /* Enumeration: callable before dglInit, after device discovery. Returns the
-   number of usable modes and fills up to max_modes entries. */
+   number of usable modes and fills up to max_modes entries, smallest first:
+   the BIOS's 16-bit modes and (v1.2) 320x200, 320x240, 400x300, 512x384 and
+   640x512 shown scaled or zoomed in a larger one. */
 int  dglEnumModes(DGLMode *modes, int max_modes);
 
 int  dglInit(const DGLConfig *cfg);     /* 0 on success */

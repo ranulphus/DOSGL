@@ -23,7 +23,7 @@ DJ_TESTFLAGS := -I$(MGAHAL)/tests/shim -DHX_BUILD_ID='"$(BUILD_ID)"'
 
 # The shared HAL (PRD D15) goes into libGL.a so consumers link only -lGL.
 HAL_SRCS := $(addprefix $(MGAHAL)/hal/,src/debug/serial.c src/pci.c src/chip.c src/vbe.c src/fifo.c \
-              src/engine.c src/dac.c src/texhw.c src/debug/regtrace.c src/setup/trap.c port/djgpp.c)
+              src/engine.c src/dac.c src/texhw.c src/present.c src/debug/regtrace.c src/setup/trap.c port/djgpp.c)
 DGL_SRCS := $(wildcard src/dgl/*.c) $(wildcard src/gl/*.c)
 LIB := build/lib/libGL.a
 
@@ -57,7 +57,7 @@ $(LIB): $(DGL_SRCS:%.c=build/djgpp/%.o) $(GEN_SRCS:%.c=build/djgpp/%.o) $(HAL_SR
 lib: $(LIB)
 
 # Examples: one directory each, linked with the guest test shim (HX- lines).
-EXAMPLES := hello probe clear tri cube texcube g4exp
+EXAMPLES := hello probe clear tri cube texcube g4exp resgl
 build/exe/%.EXE: $(LIB) $(MGAHAL)/tests/shim/hx.c
 	@mkdir -p $(dir $@)
 	$(Q)echo "  DJLD    $@"
@@ -71,6 +71,7 @@ build/exe/TRI.EXE: $(wildcard examples/tri/*.c) src/dgl/dgl.h
 build/exe/CUBE.EXE: $(wildcard examples/cube/*.c)
 build/exe/TEXCUBE.EXE: $(wildcard examples/texcube/*.c)
 build/exe/G4EXP.EXE: $(wildcard examples/g4exp/*.c) src/dgl/dgl.h src/gl/gl_tex.h
+build/exe/RESGL.EXE: $(wildcard examples/resgl/*.c)
 examples: $(foreach e,$(EXAMPLES),build/exe/$(shell echo $(e) | tr a-z A-Z).EXE)
 
 # Conformance tests (tests/conform, D16): DOS builds against libGL.a and

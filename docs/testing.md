@@ -12,3 +12,12 @@ The harness, 86Box patches and bench tooling are MGA-Glide's, vendored in
 `third_party/mgahal` (refresh with `make sync-hal`; `make check-hal`
 verifies it). Emulated cards are models: green in 86Box means plausible,
 and only Loop B declares a milestone done (PRD §11).
+
+The emulator needs every patch in the series, including CPU patch 0103.
+Without it, a DJGPP program dies with a #GP inside `__dpmi_int` whenever an
+interrupt frame straddles into a stack page the program has not yet
+touched. Whether that happens depends only on where the stack sits:
+conformance t13 and t15 hit it after the R2 changes, with no fault of
+their own. `STACKPG.EXE` (`make -C third_party/mgahal
+build/djgpp/STACKPG.EXE`) must PASS in Loop A; see
+`third_party/mgahal/docs/loops.md`.

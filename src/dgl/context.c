@@ -3,7 +3,14 @@
  * VRAM layout: colour buffer A at 0, colour buffer B (double buffering),
  * the 16-bit depth buffer, then the texture heap; each 4 KB aligned. The
  * engine always draws into the hidden buffer; a swap shows it through VBE
- * 4F07h, after the vertical retrace when vsync is on. */
+ * 4F07h, after the vertical retrace when vsync is on.
+ *
+ * Scaled modes (a size the BIOS lacks, shown in a larger BIOS mode; the
+ * HAL's mode planner decides): two display buffers of the BIOS mode, then
+ * one render buffer that GL draws into, its depth buffer and the heap. A
+ * swap scales the render buffer into the hidden display buffer
+ * (engine_present) and flips that. Zoomed modes use the layout above at
+ * the BIOS mode's pitch, and the chip doubles lines and pixels. */
 #include "dgl.h"
 #include "../gl/gl_state.h"
 #include "../gl/gl_tex.h"
@@ -28,6 +35,7 @@ static unsigned long stats_swaps0;
 /* DGL_STATS: time the swaps spent waiting for the engine to finish the frame
  * (the drain) and for the retrace, in the second being reported. */
 static uint32_t drain_us, retrace_us;
+static unsigned long present0_us;       /* stats.present_us at the last DGL-STAT */
 
 #define ALIGN4K(x) (((x) + 4095u) & ~4095u)
 
@@ -42,7 +50,7 @@ static void log_gl_error(GLenum e, void *at)
 
 uint32_t dgl_color_off(int front)
 {
-    if (!dgl_ctx.double_buffer)
+    if (dgl_ctx.scaled || !dgl_ctx.double_buffer)
         return dgl_ctx.front_off;
     return dgl_ctx.front_is_a == !!front ? dgl_ctx.front_off : dgl_ctx.back_off;
 }
@@ -60,13 +68,41 @@ static void set_target(void)
     engine_set_clip(0, 0, dgl_ctx.width, dgl_ctx.height);
 }
 
+/* Scale the render buffer into a display buffer: the hidden one for a
+ * swap, the one on screen for GL_FRONT or single buffering. The engine's
+ * texture, blend and mask registers are overwritten: GL re-emits them. */
+static void present(int to_front)
+{
+    mga_surface rs, ds;
+    uint32_t t0 = sys_time_us();
+    rs.off = dgl_ctx.front_off; rs.w = dgl_ctx.width; rs.h = dgl_ctx.height; rs.pitch_px = dgl_ctx.pitch_px;
+    ds.off = dgl_ctx.disp_off[to_front ? dgl_ctx.disp_front : !dgl_ctx.disp_front];
+    ds.w = dgl_ctx.plan.disp.width; ds.h = dgl_ctx.plan.disp.height; ds.pitch_px = dgl_ctx.disp_pitch_px;
+    DGL_FPU_ENTER();
+    engine_present(&rs, &ds, dgl_ctx.plan.dx, dgl_ctx.plan.dy, dgl_ctx.plan.dw, dgl_ctx.plan.dh,
+                   dgl_ctx.filter ? MGA_PRESENT_BILINEAR : MGA_PRESENT_NEAREST);
+    DGL_FPU_LEAVE();
+    dgl_sync();
+    stats.present_us += sys_time_us() - t0;
+    dgl_gl.dirty |= DGL_DIRTY_TARGET | DGL_DIRTY_RASTER | DGL_DIRTY_TEXTURE | DGL_DIRTY_FOG;
+}
+
+void dgl_present_front(void)
+{
+    if (!dgl_ctx.active || !dgl_ctx.scaled)
+        return;
+    dgl_sync();
+    present(1);
+}
+
 int dglInit(const DGLConfig *cfg)
 {
     static const DGLConfig zero;
     DGLConfig c;
-    const mga_vbe_mode *m;
+    const DGLMode *md;
+    const mga_mode_plan *pl;
     int pitch = 0;
-    uint32_t fb;
+    uint32_t fb, render;
     if (dgl_ctx.active) {
         dgl_set_error("dglInit called twice");
         return -1;
@@ -85,15 +121,23 @@ int dglInit(const DGLConfig *cfg)
     }
     if (dgl_discover() != 0)
         return -1;
-    m = dgl_vbe_mode_for(c.width, c.height);
-    if (!m) {
+    md = dgl_mode_for(c.width, c.height, &pl);
+    if (!md) {
         dgl_set_error("no usable %dx%dx16 mode on this card", c.width, c.height);
         return -1;
     }
     memset(&dgl_ctx, 0, sizeof dgl_ctx);
     dgl_ctx.width = c.width;
     dgl_ctx.height = c.height;
-    dgl_ctx.pitch_px = dgl_pitch_for(c.width);
+    dgl_ctx.plan = *pl;
+    dgl_ctx.scaled = md->scaled;
+    dgl_ctx.zoomed = md->zoomed;
+    dgl_ctx.pitch_px = md->pitch_px;            /* the render buffer's (scaled) or the display's */
+    dgl_ctx.disp_pitch_px = dgl_pitch_for(md->display_width);
+    {
+        const char *e = getenv("DGL_SCALE_FILTER");
+        dgl_ctx.filter = c.scale_filter ? c.scale_filter == 2 : (e && !strcmp(e, "bilinear"));
+    }
     dgl_ctx.double_buffer = c.double_buffer != 0;
     dgl_ctx.depth_bits = c.depth_bits ? 16 : 0;
     dgl_ctx.vsync = c.vsync != 0;
@@ -103,16 +147,6 @@ int dglInit(const DGLConfig *cfg)
             dgl_ctx.vsync = *e != '0';
     }
     dgl_ctx.vram_bytes = mga.vram_bytes;
-    fb = (uint32_t)dgl_ctx.pitch_px * (uint32_t)c.height * 2u;
-    dgl_ctx.front_off = 0;
-    dgl_ctx.back_off = dgl_ctx.double_buffer ? ALIGN4K(fb) : 0;
-    dgl_ctx.z_off = dgl_ctx.depth_bits ? ALIGN4K((dgl_ctx.double_buffer ? dgl_ctx.back_off : 0) + fb) : 0;
-    dgl_ctx.heap_off = ALIGN4K((dgl_ctx.z_off ? dgl_ctx.z_off : dgl_ctx.back_off) + fb);
-    if (dgl_ctx.heap_off > dgl_ctx.vram_bytes) {
-        dgl_set_error("%dx%d with these buffers needs %lu bytes of VRAM; the card has %lu", c.width, c.height,
-                      (unsigned long)dgl_ctx.heap_off, (unsigned long)dgl_ctx.vram_bytes);
-        return -1;
-    }
     /* Map at least 16 MB (the most a G200 carries; every supported card's
      * aperture is that big or bigger), so the probe below can find VRAM the
      * BIOS did not report. */
@@ -122,11 +156,13 @@ int dglInit(const DGLConfig *cfg)
         return -1;
     }
     dgl_crash_install();
-    if (vbe_set_mode(m, dgl_ctx.pitch_px, &pitch) != 0 || pitch != dgl_ctx.pitch_px) {
+    if (vbe_set_mode(&pl->disp, dgl_ctx.disp_pitch_px, &pitch) != 0 || pitch != dgl_ctx.disp_pitch_px) {
         dgl_teardown();
-        dgl_set_error("VBE mode %03x with pitch %d failed (BIOS gave %d)", m->mode, dgl_ctx.pitch_px, pitch);
+        dgl_set_error("VBE mode %03x with pitch %d failed (BIOS gave %d)", pl->disp.mode, dgl_ctx.disp_pitch_px,
+                      pitch);
         return -1;
     }
+    vbe_set_zoom(pl->zoom);
     {
         /* VBE's total memory can be short: Matrox's G200 BIOS reports 2 MB of
          * 8 in 86Box. In graphics mode VRAM can be written freely, so probe it
@@ -138,6 +174,25 @@ int dglInit(const DGLConfig *cfg)
             dgl_ctx.vram_bytes = probed;
             dgl_note_vram(probed);
         }
+    }
+    /* The layout, checked against the VRAM found (the BIOS can under-report). */
+    fb = (uint32_t)dgl_ctx.pitch_px * (uint32_t)c.height * 2u;
+    render = 0;
+    if (dgl_ctx.scaled) {
+        uint32_t disp = (uint32_t)dgl_ctx.disp_pitch_px * (uint32_t)pl->disp.height * 2u;
+        dgl_ctx.disp_off[0] = 0;
+        dgl_ctx.disp_off[1] = ALIGN4K(disp);
+        render = ALIGN4K(dgl_ctx.disp_off[1] + disp);
+    }
+    dgl_ctx.front_off = render;
+    dgl_ctx.back_off = dgl_ctx.double_buffer && !dgl_ctx.scaled ? ALIGN4K(render + fb) : render;
+    dgl_ctx.z_off = dgl_ctx.depth_bits ? ALIGN4K(dgl_ctx.back_off + fb) : 0;
+    dgl_ctx.heap_off = ALIGN4K((dgl_ctx.z_off ? dgl_ctx.z_off : dgl_ctx.back_off) + fb);
+    if (dgl_ctx.heap_off > dgl_ctx.vram_bytes) {
+        dgl_teardown();
+        dgl_set_error("%dx%d with these buffers needs %lu bytes of VRAM; the card has %lu", c.width, c.height,
+                      (unsigned long)dgl_ctx.heap_off, (unsigned long)dgl_ctx.vram_bytes);
+        return -1;
     }
     engine_init(dgl_ctx.pitch_px, 16);
     {
@@ -153,12 +208,27 @@ int dglInit(const DGLConfig *cfg)
     dgl_ctx.active = 1;
     /* Clear everything the context owns, then draw into the hidden buffer. */
     memset(&stats, 0, sizeof stats);
+    if (dgl_ctx.scaled) {
+        mga_target t;
+        int i;
+        memset(&t, 0, sizeof t);
+        t.pitch_px = dgl_ctx.disp_pitch_px; t.bpp = 16;
+        for (i = 0; i < 2; i++) {
+            t.color_off = dgl_ctx.disp_off[i];
+            engine_set_target(&t);
+            engine_set_clip(0, 0, pl->disp.width, pl->disp.height);
+            engine_fill(0, 0, pl->disp.width, pl->disp.height, 0);
+        }
+    }
     dgl_ctx.front_is_a = 0; set_target(); engine_fill(0, 0, c.width, c.height, 0);
     dgl_ctx.front_is_a = 1; set_target(); engine_fill(0, 0, c.width, c.height, 0);
     if (dgl_ctx.z_off)
         engine_fill_depth(0, 0, c.width, c.height, 0xFFFF);
     engine_sync(500000);
-    vbe_set_display_start(dgl_ctx.front_off, dgl_ctx.pitch_px * 2, 16);
+    if (dgl_ctx.scaled)
+        vbe_set_display_start(dgl_ctx.disp_off[0], dgl_ctx.disp_pitch_px * 2, 16);
+    else
+        vbe_set_display_start(dgl_ctx.front_off, dgl_ctx.pitch_px * 2, 16);
     {
         const char *e = getenv("DGL_EXIT_AFTER");
         exit_after = e ? strtoul(e, NULL, 10) : 0;
@@ -185,9 +255,9 @@ int dglInit(const DGLConfig *cfg)
         dgl_textures_reset(dgl_ctx.heap_off, end);
     }
     dgl_emit_install();
-    DGL_INFO("DGL-INIT %dx%d pitch=%d double=%d depth=%d heap=%lu..%lu", c.width, c.height, dgl_ctx.pitch_px,
-             dgl_ctx.double_buffer, dgl_ctx.depth_bits, (unsigned long)dgl_ctx.heap_off,
-             (unsigned long)dgl_ctx.vram_bytes);
+    DGL_INFO("DGL-INIT %dx%d pitch=%d double=%d depth=%d heap=%lu..%lu display=%dx%d fit=%s", c.width, c.height,
+             dgl_ctx.pitch_px, dgl_ctx.double_buffer, dgl_ctx.depth_bits, (unsigned long)dgl_ctx.heap_off,
+             (unsigned long)dgl_ctx.vram_bytes, pl->disp.width, pl->disp.height, mga_fit_name(pl->fit));
     return 0;
 }
 
@@ -232,11 +302,13 @@ void dglSwapBuffers(void)
     if (stats_on) {
         uint32_t now = sys_time_us(), dt = now - stats_t0;
         if (dt >= 1000000u) {
-            DGL_ERR("DGL-STAT fps=%.1f tris/s=%.0f swaps=%lu tex_kb=%lu stubs=%lu drain_ms=%lu retrace_ms=%lu",
-                    (stats.swaps - stats_swaps0) * 1e6 / dt, (setup_stats.tris - stats_tris0) * 1e6 / dt, stats.swaps,
-                    (unsigned long)(dgl_vram_used() >> 10), dgl_stub_calls, (unsigned long)(drain_us / 1000),
-                    (unsigned long)(retrace_us / 1000));
+            DGL_ERR("DGL-STAT fps=%.1f tris/s=%.0f swaps=%lu tex_kb=%lu stubs=%lu drain_ms=%lu retrace_ms=%lu "
+                    "present_ms=%lu", (stats.swaps - stats_swaps0) * 1e6 / dt,
+                    (setup_stats.tris - stats_tris0) * 1e6 / dt, stats.swaps, (unsigned long)(dgl_vram_used() >> 10),
+                    dgl_stub_calls, (unsigned long)(drain_us / 1000), (unsigned long)(retrace_us / 1000),
+                    (unsigned long)((stats.present_us - present0_us) / 1000));
             drain_us = retrace_us = 0;
+            present0_us = stats.present_us;
             if (stats_on >= 2) {
                 DGL_ERR("DGL-PRIMS begins=%lu skipped=%lu tris=%lu clipped=%lu zero=%lu culled=%lu",
                         dgl_prims.begins, dgl_prims.skipped, dgl_prims.tris_in, dgl_prims.clipped,
@@ -256,6 +328,23 @@ void dglSwapBuffers(void)
     if (exit_after && stats.swaps >= exit_after) {
         dglShutdown();
         exit(0);
+    }
+    if (dgl_ctx.scaled) {
+        /* Scale the finished frame into the hidden display buffer, then
+         * flip the display (single buffering: into the one on screen). */
+        present(!dgl_ctx.double_buffer);
+        if (!dgl_ctx.double_buffer)
+            return;
+        if (dgl_ctx.vsync) {
+            uint32_t t0 = stats_on ? sys_time_us() : 0;
+            engine_vsync_wait(50000);
+            if (stats_on)
+                retrace_us += sys_time_us() - t0;
+        }
+        dgl_ctx.disp_front = !dgl_ctx.disp_front;
+        vbe_set_display_start(dgl_ctx.disp_off[dgl_ctx.disp_front], dgl_ctx.disp_pitch_px * 2, 16);
+        set_target();
+        return;
     }
     if (!dgl_ctx.double_buffer)
         return;

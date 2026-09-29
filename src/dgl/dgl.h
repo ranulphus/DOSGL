@@ -27,7 +27,8 @@ void dgl_set_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 /* device.c: discovery (once) and the filtered mode list. */
 int dgl_discover(void);                   /* 0 = a supported card was found */
 void dgl_note_vram(uint32_t bytes);       /* the probed VRAM size, when larger than VBE's */
-const mga_vbe_mode *dgl_vbe_mode_for(int width, int height);
+const DGLMode *dgl_mode_for(int width, int height, const mga_mode_plan **plan);
+uint32_t dgl_known_vram(void);             /* the most VRAM known (probe, DGL_VRAM_KB, BIOS) */
 int dgl_pitch_for(int width);             /* pixels, engine rules */
 
 /* crash.c: fault/exit teardown (FR-DBG-7..9). */
@@ -48,7 +49,16 @@ typedef struct {
     uint32_t front_off, back_off, z_off, heap_off, vram_bytes;
     int      front_is_a;                  /* which of the two colour buffers is shown */
     int      draw_front, read_front;      /* glDrawBuffer/glReadBuffer chose GL_FRONT */
+    /* Scaled modes (v1.2): GL draws into one render buffer (front_off, at
+     * pitch_px) and each swap scales it into the hidden display buffer,
+     * then flips the display. Zoomed modes draw into the display buffers
+     * and the chip doubles lines and pixels. */
+    int      scaled, zoomed, filter;
+    uint32_t disp_off[2];
+    int      disp_front, disp_pitch_px;
+    mga_mode_plan plan;
 } dgl_context;
+void dgl_present_front(void);             /* scaled, single-buffered or GL_FRONT: show the render buffer now */
 extern dgl_context dgl_ctx;
 
 uint32_t dgl_color_off(int front);        /* VRAM offset of the shown (1) or hidden (0) buffer */

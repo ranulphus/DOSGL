@@ -5,7 +5,7 @@ WATCOM ?= $(HOME)/.local/opt/watcom-20260901
 export WATCOM DJGPP_PREFIX DJGPP_URL DJGPP_SHA256 CWSDPMI_URL CWSDPMI_SHA256 OW_URL OW_SHA256
 Q ?= @
 
-HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/setup/trap.c
+HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/present.c hal/src/setup/trap.c
 
 DJENV := env LD_LIBRARY_PATH=$(DJGPP_PREFIX)/hostlib
 DJCC := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-gcc
@@ -36,7 +36,10 @@ build/djgpp/HELLO.EXE: tests/shim/hello.c tests/shim/hx.c build/djgpp/libmgahal.
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
 build/djgpp/PROBE.EXE: tests/hal/probe.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
-dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE
+# The emulator's DPMI stack check (docs/loops.md): must PASS in Loop A.
+build/djgpp/STACKPG.EXE: tests/shim/stackpg.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
+dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/STACKPG.EXE
 
 build/host/%.o: %.c
 	@mkdir -p $(dir $@)
