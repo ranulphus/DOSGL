@@ -28,6 +28,17 @@ void dgl_set_error(const char *fmt, ...)
     DGL_ERR("DGL-ERROR %s", dgl_error);
 }
 
+/* A GL 1.1 function DOS-GL only stubs was called (build/gen/stubs.c). */
+unsigned long dgl_stub_calls;
+void dgl_stub_hit(const char *name, int *seen)
+{
+    dgl_stub_calls++;
+    if (!*seen) {
+        *seen = 1;
+        DGL_WARN("DGL-STUB %s", name);
+    }
+}
+
 const char *dglGetErrorString(void)
 {
     return dgl_error;

@@ -21,6 +21,7 @@ static GLuint bound;                     /* name bound to GL_TEXTURE_2D */
 static uint32_t white_off;
 static int white_ok;
 static GLenum env_mode = GL_MODULATE;
+static GLfloat env_color[4];            /* GL_TEXTURE_ENV_COLOR */
 
 GLenum dgl_tex_env_mode(void) { return env_mode; }
 GLuint dgl_bound_name(void) { return bound; }
@@ -73,6 +74,7 @@ void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end)
         destroy(i);
     bound = 0;
     env_mode = GL_MODULATE;
+    memset(env_color, 0, sizeof env_color);
     dgl_vram_init(heap_start, heap_end);
     white_ok = dgl_vram_alloc(8 * 8 * 2, &white_off) == 0;
     if (white_ok) {
@@ -161,7 +163,7 @@ static void param(GLenum target, GLenum pname, GLint v)
         t->mag_filter = (GLenum)v;
         break;
     case GL_TEXTURE_WRAP_S: case GL_TEXTURE_WRAP_T:
-        if (v != GL_REPEAT && v != GL_CLAMP) { dgl_gl_error(GL_INVALID_ENUM); return; }
+        if (v != GL_REPEAT && v != GL_CLAMP && v != GL_CLAMP_TO_EDGE) { dgl_gl_error(GL_INVALID_ENUM); return; }
         if (pname == GL_TEXTURE_WRAP_S) t->wrap_s = (GLenum)v; else t->wrap_t = (GLenum)v;
         t->dirty = 1;                   /* small levels are widened differently */
         break;
@@ -170,6 +172,8 @@ static void param(GLenum target, GLenum pname, GLint v)
         t->max_level = v;
         t->dirty = 1;
         break;
+    case GL_TEXTURE_PRIORITY: case GL_TEXTURE_MAX_ANISOTROPY_EXT:
+        return;                         /* accepted, no effect */
     default:
         dgl_gl_error(GL_INVALID_ENUM);
         return;
@@ -180,12 +184,154 @@ static void param(GLenum target, GLenum pname, GLint v)
 void APIENTRY glTexParameteri(GLenum target, GLenum pname, GLint v) { param(target, pname, v); }
 void APIENTRY glTexParameterf(GLenum target, GLenum pname, GLfloat v) { param(target, pname, (GLint)v); }
 
-void APIENTRY glTexEnvi(GLenum target, GLenum pname, GLint param_)
+void APIENTRY glTexParameterfv(GLenum target, GLenum pname, const GLfloat *v)
 {
-    if (target != GL_TEXTURE_ENV || pname != GL_TEXTURE_ENV_MODE) { dgl_gl_error(GL_INVALID_ENUM); return; }
-    if (param_ != GL_MODULATE && param_ != GL_REPLACE && param_ != GL_DECAL) { dgl_gl_error(GL_INVALID_ENUM); return; }
-    env_mode = (GLenum)param_;
+    if (pname == GL_TEXTURE_BORDER_COLOR) {         /* borders are not drawn (PRD §8.3) */
+        if (target != GL_TEXTURE_2D) dgl_gl_error(GL_INVALID_ENUM);
+        return;
+    }
+    param(target, pname, (GLint)v[0]);
+}
+
+void APIENTRY glTexParameteriv(GLenum target, GLenum pname, const GLint *v)
+{
+    if (pname == GL_TEXTURE_BORDER_COLOR) {
+        if (target != GL_TEXTURE_2D) dgl_gl_error(GL_INVALID_ENUM);
+        return;
+    }
+    param(target, pname, v[0]);
+}
+
+static int get_param(GLenum target, GLenum pname, GLfloat *v)
+{
+    dgl_texture *t = get(bound, 1);
+    if (target != GL_TEXTURE_2D || !t) { dgl_gl_error(GL_INVALID_ENUM); return 0; }
+    switch (pname) {
+    case GL_TEXTURE_MIN_FILTER: v[0] = (GLfloat)t->min_filter; return 1;
+    case GL_TEXTURE_MAG_FILTER: v[0] = (GLfloat)t->mag_filter; return 1;
+    case GL_TEXTURE_WRAP_S: v[0] = (GLfloat)t->wrap_s; return 1;
+    case GL_TEXTURE_WRAP_T: v[0] = (GLfloat)t->wrap_t; return 1;
+    case GL_TEXTURE_MAX_LEVEL: v[0] = (GLfloat)t->max_level; return 1;
+    case GL_TEXTURE_PRIORITY: v[0] = 1.0f; return 1;
+    case GL_TEXTURE_RESIDENT: v[0] = (GLfloat)t->resident; return 1;
+    case GL_TEXTURE_BORDER_COLOR: v[0] = v[1] = v[2] = v[3] = 0; return 4;
+    default: dgl_gl_error(GL_INVALID_ENUM); return 0;
+    }
+}
+
+void APIENTRY glGetTexParameterfv(GLenum target, GLenum pname, GLfloat *out)
+{
+    GLfloat v[4];
+    int n = get_param(target, pname, v), i;
+    for (i = 0; i < n; i++)
+        out[i] = v[i];
+}
+
+void APIENTRY glGetTexParameteriv(GLenum target, GLenum pname, GLint *out)
+{
+    GLfloat v[4];
+    int n = get_param(target, pname, v), i;
+    for (i = 0; i < n; i++)
+        out[i] = (GLint)v[i];
+}
+
+/* Level parameters of the bound texture, as uploaded (the internal format
+ * is the base format DOS-GL stores). */
+void APIENTRY glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint *out)
+{
+    dgl_texture *t = get(bound, 0);
+    const dgl_level *L;
+    if (target != GL_TEXTURE_2D || level < 0 || level >= DGL_MAX_LEVELS) { dgl_gl_error(GL_INVALID_VALUE); return; }
+    L = t ? &t->level[level] : NULL;
+    switch (pname) {
+    case GL_TEXTURE_WIDTH: out[0] = L ? L->w : 0; break;
+    case GL_TEXTURE_HEIGHT: out[0] = L ? L->h : 0; break;
+    case GL_TEXTURE_BORDER: out[0] = 0; break;
+    case GL_TEXTURE_INTERNAL_FORMAT: out[0] = t && t->hwfmt == DGL_TW16 ? GL_RGB : GL_RGBA; break;
+    case GL_TEXTURE_RED_SIZE: case GL_TEXTURE_BLUE_SIZE:
+        out[0] = !t ? 0 : t->hwfmt == DGL_TW12 ? 4 : 5; break;
+    case GL_TEXTURE_GREEN_SIZE: out[0] = !t ? 0 : t->hwfmt == DGL_TW12 ? 4 : t->hwfmt == DGL_TW15 ? 5 : 6; break;
+    case GL_TEXTURE_ALPHA_SIZE: out[0] = !t ? 0 : t->hwfmt == DGL_TW12 ? 4 : t->hwfmt == DGL_TW15 ? 1 : 0; break;
+    case GL_TEXTURE_LUMINANCE_SIZE: case GL_TEXTURE_INTENSITY_SIZE: out[0] = 0; break;
+    default: dgl_gl_error(GL_INVALID_ENUM);
+    }
+}
+
+void APIENTRY glGetTexLevelParameterfv(GLenum target, GLint level, GLenum pname, GLfloat *out)
+{
+    GLint v = 0;
+    glGetTexLevelParameteriv(target, level, pname, &v);
+    out[0] = (GLfloat)v;
+}
+
+/* ---- Texture environment ------------------------------------------------- */
+static void env(GLenum target, GLenum pname, const GLfloat *v)
+{
+    GLint mode;
+    int i;
+    if (target != GL_TEXTURE_ENV) { dgl_gl_error(GL_INVALID_ENUM); return; }
+    switch (pname) {
+    case GL_TEXTURE_ENV_MODE:
+        mode = (GLint)v[0];
+        /* GL_BLEND (and GL_ADD) need the combiner work that comes with dual
+         * texturing; until then they are refused rather than drawn wrongly. */
+        if (mode != GL_MODULATE && mode != GL_REPLACE && mode != GL_DECAL) { dgl_gl_error(GL_INVALID_ENUM); return; }
+        env_mode = (GLenum)mode;
+        break;
+    case GL_TEXTURE_ENV_COLOR:
+        for (i = 0; i < 4; i++)
+            env_color[i] = v[i] < 0 ? 0 : v[i] > 1 ? 1 : v[i];
+        break;
+    default:
+        dgl_gl_error(GL_INVALID_ENUM);
+        return;
+    }
     dgl_gl.dirty |= DGL_DIRTY_TEXTURE | DGL_DIRTY_RASTER;
+}
+
+void APIENTRY glTexEnvi(GLenum target, GLenum pname, GLint p)
+{
+    GLfloat f = (GLfloat)p;
+    if (pname == GL_TEXTURE_ENV_COLOR) { dgl_gl_error(GL_INVALID_ENUM); return; }
+    env(target, pname, &f);
+}
+
+void APIENTRY glTexEnvf(GLenum target, GLenum pname, GLfloat p)
+{
+    if (pname == GL_TEXTURE_ENV_COLOR) { dgl_gl_error(GL_INVALID_ENUM); return; }
+    env(target, pname, &p);
+}
+
+void APIENTRY glTexEnvfv(GLenum target, GLenum pname, const GLfloat *v) { env(target, pname, v); }
+
+void APIENTRY glTexEnviv(GLenum target, GLenum pname, const GLint *v)
+{
+    GLfloat f[4];
+    int i;
+    if (pname == GL_TEXTURE_ENV_COLOR)
+        for (i = 0; i < 4; i++)          /* integer colours map [0, INT_MAX] to [0, 1] */
+            f[i] = (GLfloat)((double)v[i] / 2147483647.0);
+    else
+        f[0] = (GLfloat)v[0];
+    env(target, pname, f);
+}
+
+void APIENTRY glGetTexEnvfv(GLenum target, GLenum pname, GLfloat *v)
+{
+    int i;
+    if (target != GL_TEXTURE_ENV) { dgl_gl_error(GL_INVALID_ENUM); return; }
+    if (pname == GL_TEXTURE_ENV_MODE) v[0] = (GLfloat)env_mode;
+    else if (pname == GL_TEXTURE_ENV_COLOR) for (i = 0; i < 4; i++) v[i] = env_color[i];
+    else dgl_gl_error(GL_INVALID_ENUM);
+}
+
+void APIENTRY glGetTexEnviv(GLenum target, GLenum pname, GLint *v)
+{
+    int i;
+    if (target != GL_TEXTURE_ENV) { dgl_gl_error(GL_INVALID_ENUM); return; }
+    if (pname == GL_TEXTURE_ENV_MODE) v[0] = (GLint)env_mode;
+    else if (pname == GL_TEXTURE_ENV_COLOR) for (i = 0; i < 4; i++) v[i] = (GLint)(env_color[i] * 2147483647.0);
+    else dgl_gl_error(GL_INVALID_ENUM);
 }
 
 /* ---- Uploads ------------------------------------------------------------- */
@@ -273,8 +419,8 @@ static void write_level(const dgl_texture *t, int l, int hwfmt, uint32_t off, in
         for (x = 0; x < hw_w; x++) {
             int sx = x, sy = y;
             const unsigned char *p;
-            if (sx >= L->w) sx = t->wrap_s == GL_CLAMP ? L->w - 1 : sx % L->w;
-            if (sy >= L->h) sy = t->wrap_t == GL_CLAMP ? L->h - 1 : sy % L->h;
+            if (sx >= L->w) sx = t->wrap_s != GL_REPEAT ? L->w - 1 : sx % L->w;
+            if (sy >= L->h) sy = t->wrap_t != GL_REPEAT ? L->h - 1 : sy % L->h;
             p = L->rgba + ((size_t)sy * L->w + sx) * 4;
             dst[y * hw_w + x] = dgl_pack_texel(hwfmt, p[0], p[1], p[2], p[3]);
         }

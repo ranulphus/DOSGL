@@ -1,6 +1,7 @@
-/* readpix.c - glReadPixels (PRD §8.4): the buffer being drawn (GL's back
- * buffer when double-buffered), RGB565 expanded to 8 bits per channel by
- * bit replication, alpha 255, rows bottom-up as GL numbers them. */
+/* readpix.c - colour buffer selection and glReadPixels (PRD §8.4).
+ * glReadPixels reads the glReadBuffer buffer (the back buffer by default when
+ * double-buffered): RGB565 expanded to 8 bits per channel by bit
+ * replication, alpha 255, rows bottom-up as GL numbers them. */
 #include "gl_state.h"
 #include "../dgl/dgl.h"
 #include <string.h>
@@ -22,9 +23,7 @@ void APIENTRY glReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format
     stride = w * bpp;
     stride = (stride + dgl_gl.pack_align - 1) / dgl_gl.pack_align * dgl_gl.pack_align;
     engine_sync(500000);                    /* the LFB is not ordered with queued draws */
-    fb = (const volatile uint16_t *)(mga_fb + (dgl_ctx.double_buffer
-                                                   ? (dgl_ctx.front_is_a ? dgl_ctx.back_off : dgl_ctx.front_off)
-                                                   : dgl_ctx.front_off));
+    fb = (const volatile uint16_t *)(mga_fb + dgl_color_off(dgl_ctx.read_front));
     for (j = 0; j < h; j++, row += stride) {
         int sy = dgl_ctx.height - 1 - (y + j);     /* GL row -> screen row */
         unsigned char *p = row;
@@ -43,4 +42,44 @@ void APIENTRY glReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format
                 p[3] = 255;
         }
     }
+}
+
+/* ---- Colour buffer selection --------------------------------------------- */
+/* 1 = the shown buffer, 0 = the hidden one, -1 = not a buffer DOS-GL has.
+ * Both-buffer modes draw into the hidden one only (logged once). */
+static int which_buffer(GLenum mode)
+{
+    static int warned;
+    switch (mode) {
+    case GL_FRONT: case GL_FRONT_LEFT:
+        return 1;
+    case GL_BACK: case GL_BACK_LEFT:
+        return dgl_ctx.active && !dgl_ctx.double_buffer ? -1 : 0;
+    case GL_FRONT_AND_BACK: case GL_LEFT:
+        if (!warned++)
+            DGL_WARN("glDrawBuffer 0x%x draws the back buffer only", (unsigned)mode);
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+void APIENTRY glDrawBuffer(GLenum mode)
+{
+    int front = which_buffer(mode);
+    if (front < 0) { dgl_gl_error(mode == GL_BACK || mode == GL_BACK_LEFT ? GL_INVALID_OPERATION : GL_INVALID_ENUM); return; }
+    dgl_gl.draw_buffer = mode;
+    if (front == dgl_ctx.draw_front)
+        return;
+    dgl_ctx.draw_front = front;
+    dgl_retarget();
+    dgl_gl.dirty |= DGL_DIRTY_TARGET | DGL_DIRTY_RASTER;    /* the target write reset MACCESS */
+}
+
+void APIENTRY glReadBuffer(GLenum mode)
+{
+    int front = mode == GL_FRONT_AND_BACK || mode == GL_LEFT ? -1 : which_buffer(mode);
+    if (front < 0) { dgl_gl_error(mode == GL_BACK || mode == GL_BACK_LEFT ? GL_INVALID_OPERATION : GL_INVALID_ENUM); return; }
+    dgl_gl.read_buffer = mode;
+    dgl_ctx.read_front = front;
 }

@@ -23,6 +23,7 @@ static mga_texstate tstate;
 static int textured;                  /* 0 none, 1 the bound texture, 2 the white texture (fog) */
 static float tex_scale_s = 1, tex_scale_t = 1;   /* logical / stored size (small textures are widened to 8) */
 static int skip_all;                  /* depth or alpha function NEVER, or no context */
+static float tri_offset;              /* glPolygonOffset for the triangle being drawn (depth steps) */
 static float guard_x, guard_y;
 
 /* ---- State validation --------------------------------------------------- */
@@ -138,8 +139,8 @@ static void validate(void)
             tex_scale_t = (float)tex->level[0].h / (float)(1 << tex->hw_h_log2);
             tstate.pitch = 1 << tex->hw_w_log2;
             tstate.hwfmt = (uint32_t)tex->hwfmt;
-            tstate.clamp_u = tex->wrap_s == GL_CLAMP;
-            tstate.clamp_v = tex->wrap_t == GL_CLAMP;
+            tstate.clamp_u = tex->wrap_s != GL_REPEAT;      /* CLAMP behaves as CLAMP_TO_EDGE */
+            tstate.clamp_v = tex->wrap_t != GL_REPEAT;
             tstate.modulate = env == GL_MODULATE;
             tstate.bilinear = tex->mag_filter == GL_LINEAR || tex->min_filter == GL_LINEAR ||
                               tex->min_filter == GL_LINEAR_MIPMAP_NEAREST || tex->min_filter == GL_LINEAR_MIPMAP_LINEAR;
@@ -259,6 +260,11 @@ static void draw_projected(const proj *p0, const proj *p1, const proj *p2)
 {
     mga_svtx a = p0->v, b = p1->v, c = p2->v;
     clamp_colour(&a); clamp_colour(&b); clamp_colour(&c);
+    if (tri_offset != 0.0f) {
+#define OFS(v) v.z += tri_offset; if (v.z < 0) v.z = 0; else if (v.z > 65535.0) v.z = 65535.0
+        OFS(a); OFS(b); OFS(c);
+#undef OFS
+    }
     if (textured)
         tex_adjust_coords(&a, &b, &c, &tstate);
     setup_triangle(&a, &b, &c, &tctx);
@@ -316,23 +322,43 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
         for (i = 0; i < 3; i++) {
             in[i].r = prov->r; in[i].g = prov->g; in[i].b = prov->b; in[i].a = prov->a;
         }
+    dgl_prims.tris_in++;
     n = dgl_clip_polygon(in, 3, out, guard_x, guard_y);
-    if (n < 3)
+    if (n < 3) {
+        dgl_prims.clipped++;
         return;
+    }
     for (i = 0; i < n; i++)
         project(&out[i], &p[i]);
     /* Cull on the (unclipped-equivalent) winding of the first three screen
      * vertices; y runs down on screen, so GL's counter-clockwise is area < 0. */
     area2 = (int64_t)(p[1].v.X16 - p[0].v.X16) * (p[2].v.Y16 - p[0].v.Y16) -
             (int64_t)(p[2].v.X16 - p[0].v.X16) * (p[1].v.Y16 - p[0].v.Y16);
-    if (area2 == 0)
+    if (area2 == 0) {
+        dgl_prims.zero_area++;
         return;
+    }
     if (dgl_gl.cull_face) {
         int front = (dgl_gl.front_face == GL_CCW) ? area2 < 0 : area2 > 0;
-        if (dgl_gl.cull_mode == GL_FRONT_AND_BACK || (dgl_gl.cull_mode == GL_BACK) != front)
+        if (dgl_gl.cull_mode == GL_FRONT_AND_BACK || (dgl_gl.cull_mode == GL_BACK) != front) {
+            dgl_prims.culled++;
             return;
+        }
     }
     for (i = 1; i + 1 < n; i++) {
+        tri_offset = 0.0f;
+        if (dgl_gl.offset_fill && (dgl_gl.offset_factor != 0.0f || dgl_gl.offset_units != 0.0f)) {
+            /* GL: o = factor * max |dz/dx|, |dz/dy| + units * r, with z in
+             * depth-buffer steps (r = one step). */
+            double x1 = p[i].x - p[0].x, y1 = p[i].y - p[0].y, z1 = p[i].v.z - p[0].v.z;
+            double x2 = p[i + 1].x - p[0].x, y2 = p[i + 1].y - p[0].y, z2 = p[i + 1].v.z - p[0].v.z;
+            double det = x1 * y2 - x2 * y1, m = 0;
+            if (det != 0) {
+                double dzdx = fabs((z1 * y2 - z2 * y1) / det), dzdy = fabs((x1 * z2 - x2 * z1) / det);
+                m = dzdx > dzdy ? dzdx : dzdy;
+            }
+            tri_offset = (float)(dgl_gl.offset_factor * m + dgl_gl.offset_units);
+        }
         if (dgl_gl.fog)
             fog_split(&out[0], &out[i], &out[i + 1], &p[0], &p[i], &p[i + 1], 0);
         else
@@ -363,7 +389,7 @@ static void emit_line(const dgl_cvtx *a, const dgl_cvtx *b)
     dgl_cvtx in[3], out[9];
     proj p0, p1;
     int n;
-    double dx, dy;
+    double dx, dy, hw;
     /* Clip the segment as a degenerate triangle, keep the first two outputs. */
     in[0] = *a; in[1] = *b; in[2] = *b;
     if (dgl_gl.shade_model == GL_FLAT) {
@@ -374,23 +400,27 @@ static void emit_line(const dgl_cvtx *a, const dgl_cvtx *b)
         return;
     project(&out[0], &p0);
     project(&out[1], &p1);
+    tri_offset = 0.0f;
     dx = p1.x - p0.x; dy = p1.y - p0.y;
+    hw = 0.5 * (dgl_gl.line_width < 1.0f ? 1.0 : dgl_gl.line_width);
     if (fabs(dx) >= fabs(dy))
-        quad(&p0, &p1, 0.0, 0.5);             /* x-major: widen vertically */
+        quad(&p0, &p1, 0.0, hw);              /* x-major: widen vertically */
     else
-        quad(&p0, &p1, 0.5, 0.0);
+        quad(&p0, &p1, hw, 0.0);
 }
 
 static void emit_point(const dgl_cvtx *a)
 {
     proj p, q;
+    double s = dgl_gl.point_size < 1.0f ? 1.0 : dgl_gl.point_size;   /* a square s pixels wide */
     if (dgl_outcode(a, guard_x, guard_y))
         return;
     project(a, &p);
-    p.x -= 0.5;
+    tri_offset = 0.0f;
+    p.x -= 0.5 * s;
     q = p;
-    q.x += 1.0;
-    quad(&p, &q, 0.0, 0.5);
+    q.x += s;
+    quad(&p, &q, 0.0, 0.5 * s);
 }
 
 static void emit_end(void) { }

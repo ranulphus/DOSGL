@@ -14,6 +14,7 @@ static void log_line(const char *l) { DGL_ERR("%s", l); }
 
 void dgl_teardown(void)
 {
+    dgl_note_exit();
     if (!graphics)
         return;
     graphics = 0;

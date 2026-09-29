@@ -14,6 +14,8 @@ static int *cap_flag(GLenum cap)
     case GL_SCISSOR_TEST: return &dgl_gl.scissor_test;
     case GL_TEXTURE_2D:   return &dgl_gl.texture_2d;
     case GL_DITHER:       return &dgl_gl.dither;
+    case GL_POLYGON_OFFSET_FILL: return &dgl_gl.offset_fill;
+    case GL_STENCIL_TEST: return &dgl_gl.stencil_test;
     default:              return 0;
     }
 }
@@ -22,8 +24,16 @@ static void set_cap(GLenum cap, int on)
 {
     int *f = cap_flag(cap);
     if (!f) {
-        if (cap != GL_LIGHTING && cap != GL_NORMALIZE)       /* accepted and ignored (PRD §2.2) */
+        switch (cap) {                                       /* accepted and ignored (PRD §2.2) */
+        case GL_LIGHTING: case GL_NORMALIZE: case GL_POINT_SMOOTH: case GL_LINE_SMOOTH: case GL_POLYGON_SMOOTH:
+        case GL_LINE_STIPPLE: case GL_POLYGON_STIPPLE: case GL_POLYGON_OFFSET_POINT: case GL_POLYGON_OFFSET_LINE:
+        case GL_COLOR_MATERIAL: case GL_TEXTURE_1D: case GL_TEXTURE_GEN_S: case GL_TEXTURE_GEN_T:
+        case GL_CLIP_PLANE0: case GL_CLIP_PLANE1: case GL_CLIP_PLANE2: case GL_CLIP_PLANE3:
+        case GL_CLIP_PLANE4: case GL_CLIP_PLANE5:
+            break;
+        default:
             dgl_gl_error(GL_INVALID_ENUM);
+        }
         return;
     }
     if (*f != on) {
@@ -44,7 +54,12 @@ GLboolean APIENTRY glIsEnabled(GLenum cap)
     case GL_VERTEX_ARRAY:        return (GLboolean)dgl_gl.va.enabled;
     case GL_COLOR_ARRAY:         return (GLboolean)dgl_gl.ca.enabled;
     case GL_TEXTURE_COORD_ARRAY: return (GLboolean)dgl_gl.ta.enabled;
-    case GL_LIGHTING: case GL_NORMALIZE: return GL_FALSE;
+    case GL_LIGHTING: case GL_NORMALIZE: case GL_POINT_SMOOTH: case GL_LINE_SMOOTH: case GL_POLYGON_SMOOTH:
+    case GL_LINE_STIPPLE: case GL_POLYGON_STIPPLE: case GL_POLYGON_OFFSET_POINT: case GL_POLYGON_OFFSET_LINE:
+    case GL_COLOR_MATERIAL: case GL_TEXTURE_1D: case GL_TEXTURE_GEN_S: case GL_TEXTURE_GEN_T:
+    case GL_CLIP_PLANE0: case GL_CLIP_PLANE1: case GL_CLIP_PLANE2: case GL_CLIP_PLANE3:
+    case GL_CLIP_PLANE4: case GL_CLIP_PLANE5:
+        return GL_FALSE;
     default: dgl_gl_error(GL_INVALID_ENUM); return GL_FALSE;
     }
 }
@@ -220,6 +235,54 @@ void APIENTRY glFogiv(GLenum pname, const GLint *params)
         f[0] = (GLfloat)params[0];
     fog_param(pname, f);
 }
+
+/* ---- Points, lines, polygon offset (GL 1.1) --------------------------------- */
+void APIENTRY glPointSize(GLfloat size)
+{
+    if (size <= 0) { dgl_gl_error(GL_INVALID_VALUE); return; }
+    dgl_gl.point_size = size;
+}
+
+void APIENTRY glLineWidth(GLfloat width)
+{
+    if (width <= 0) { dgl_gl_error(GL_INVALID_VALUE); return; }
+    dgl_gl.line_width = width;
+}
+
+/* Applied to filled polygons at setup (emit.c): factor x the triangle's
+ * steepest depth slope plus units, in 16-bit depth-buffer steps. */
+void APIENTRY glPolygonOffset(GLfloat factor, GLfloat units)
+{
+    dgl_gl.offset_factor = factor;
+    dgl_gl.offset_units = units;
+}
+
+/* ---- Stencil: accepted with no stencil buffer (0 bits) --------------------
+ * GL: without a stencil buffer the test always passes and nothing is
+ * written, so the state is only recorded for queries. */
+static int is_stencil_op(GLenum op)
+{
+    return op == GL_KEEP || op == GL_ZERO || op == GL_REPLACE || op == GL_INCR || op == GL_DECR || op == GL_INVERT;
+}
+
+void APIENTRY glStencilFunc(GLenum func, GLint ref, GLuint mask)
+{
+    if (!is_func(func)) { dgl_gl_error(GL_INVALID_ENUM); return; }
+    dgl_gl.stencil_func = func;
+    dgl_gl.stencil_ref = ref;
+    dgl_gl.stencil_mask = mask;
+}
+
+void APIENTRY glStencilOp(GLenum fail, GLenum zfail, GLenum zpass)
+{
+    if (!is_stencil_op(fail) || !is_stencil_op(zfail) || !is_stencil_op(zpass)) { dgl_gl_error(GL_INVALID_ENUM); return; }
+    dgl_gl.stencil_fail = fail;
+    dgl_gl.stencil_zfail = zfail;
+    dgl_gl.stencil_zpass = zpass;
+}
+
+void APIENTRY glStencilMask(GLuint mask) { dgl_gl.stencil_writemask = mask; }
+void APIENTRY glClearStencil(GLint s) { dgl_gl.clear_stencil = s; }
 
 /* ---- Accepted, no effect (PRD §2.2, §6.2) ------------------------------ */
 void APIENTRY glNormal3f(GLfloat nx, GLfloat ny, GLfloat nz) { (void)nx; (void)ny; (void)nz; }

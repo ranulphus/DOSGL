@@ -15,6 +15,7 @@
 #  endif
 #endif
 void dgl_logf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+extern unsigned long dgl_stub_calls;      /* log.c */
 #define DGL_ERR(...)  dgl_logf(__VA_ARGS__)
 #define DGL_WARN(...) do { if (DGL_LOG_LEVEL >= 1) dgl_logf(__VA_ARGS__); } while (0)
 #define DGL_INFO(...) do { if (DGL_LOG_LEVEL >= 2) dgl_logf(__VA_ARGS__); } while (0)
@@ -31,6 +32,7 @@ int dgl_pitch_for(int width);             /* pixels, engine rules */
 /* crash.c: fault/exit teardown (FR-DBG-7..9). */
 void dgl_crash_install(void);
 void dgl_teardown(void);                  /* reset engine, text mode; safe to call twice */
+void dgl_note_exit(void);                 /* DGL-EXIT if DGL-START was printed */
 
 /* emit.c: install the hardware sinks for the vertex stream. */
 void dgl_emit_install(void);
@@ -42,7 +44,11 @@ typedef struct {
     int      double_buffer, depth_bits, vsync;
     uint32_t front_off, back_off, z_off, heap_off, vram_bytes;
     int      front_is_a;                  /* which of the two colour buffers is shown */
+    int      draw_front, read_front;      /* glDrawBuffer/glReadBuffer chose GL_FRONT */
 } dgl_context;
 extern dgl_context dgl_ctx;
+
+uint32_t dgl_color_off(int front);        /* VRAM offset of the shown (1) or hidden (0) buffer */
+void dgl_retarget(void);                  /* point the engine at dgl_ctx.draw_front's buffer */
 
 #endif

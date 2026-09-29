@@ -181,8 +181,11 @@ void dgl_assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, con
     GLsizei i;
 #define I(k) (idx ? idx[k] : first + (k))
     vc.cur++;
-    if (dgl_sink.begin && !dgl_sink.begin())
+    dgl_prims.begins++;
+    if (dgl_sink.begin && !dgl_sink.begin()) {
+        dgl_prims.skipped++;
         return;
+    }
     switch (mode) {
     case GL_TRIANGLES:
         for (i = 0; i + 2 < count; i += 3)
@@ -285,6 +288,8 @@ void APIENTRY glBegin(GLenum mode)
     imm.active = 1; imm.mode = mode; imm.n = 0;
 }
 
+void dgl_imm_vertex(float x, float y, float z, float w);
+
 static void imm_vertex(float x, float y, float z, float w)
 {
     dgl_vin *v;
@@ -309,6 +314,30 @@ void APIENTRY glEnd(void)
     if (dgl_sink.record_imm && dgl_sink.record_imm(imm.mode, imm.n, imm.v))
         return;
     dgl_assemble(imm.mode, imm.n, NULL, 0, imm.v);
+}
+
+void dgl_imm_vertex(float x, float y, float z, float w) { imm_vertex(x, y, z, w); }
+
+/* glArrayElement: the attribute commands for element i of each enabled array,
+ * then (with the vertex array enabled) the vertex itself, as GL 1.1 defines. */
+void APIENTRY glArrayElement(GLint i)
+{
+    dgl_vin v;
+    memset(&v, 0, sizeof v);
+    v.pos[3] = 1;
+    if (dgl_gl.ca.enabled) {
+        v.col[3] = 1;
+        read_comps(&dgl_gl.ca, i, v.col, 4, 1);
+        memcpy(dgl_gl.cur_color, v.col, sizeof v.col);
+    }
+    if (dgl_gl.ta.enabled) {
+        read_comps(&dgl_gl.ta, i, v.tex, 2, 0);
+        memcpy(dgl_gl.cur_tex, v.tex, sizeof v.tex);
+    }
+    if (dgl_gl.va.enabled) {
+        read_comps(&dgl_gl.va, i, v.pos, 4, 0);
+        imm_vertex(v.pos[0], v.pos[1], v.pos[2], v.pos[3]);
+    }
 }
 
 void APIENTRY glVertex3f(GLfloat x, GLfloat y, GLfloat z) { imm_vertex(x, y, z, 1); }

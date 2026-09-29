@@ -21,18 +21,34 @@ static DGLStats stats;
 /* Test hooks (PRD §5.5, M5): DGL_EXIT_AFTER=n ends the program after n
  * swaps; DGL_STATS=1 logs frame and triangle rates once a second. */
 static unsigned long exit_after;
-static int stats_on;
+static int exit_pending;           /* DGL-START printed, DGL-EXIT owed */
+static int stats_on;                /* DGL_STATS: 1 = DGL-STAT, 2 = also DGL-PRIMS */
 static uint32_t stats_t0, stats_tris0;
 static unsigned long stats_swaps0;
 
 #define ALIGN4K(x) (((x) + 4095u) & ~4095u)
 
+/* The first GL errors, with the address inside the GL function that raised
+ * them (look it up in the program's link map). */
+static void log_gl_error(GLenum e, void *at)
+{
+    static int n;
+    if (n < 16 && ++n)
+        DGL_WARN("DGL-GLERR 0x%04x at %p%s", (unsigned)e, at, n == 16 ? " (no more logged)" : "");
+}
+
+uint32_t dgl_color_off(int front)
+{
+    if (!dgl_ctx.double_buffer)
+        return dgl_ctx.front_off;
+    return dgl_ctx.front_is_a == !!front ? dgl_ctx.front_off : dgl_ctx.back_off;
+}
+
 static void set_target(void)
 {
     mga_target t;
     memset(&t, 0, sizeof t);
-    t.color_off = dgl_ctx.double_buffer ? (dgl_ctx.front_is_a ? dgl_ctx.back_off : dgl_ctx.front_off)
-                                        : dgl_ctx.front_off;
+    t.color_off = dgl_color_off(dgl_ctx.draw_front);
     t.z_off = dgl_ctx.z_off;
     t.pitch_px = dgl_ctx.pitch_px;
     t.bpp = 16;
@@ -123,12 +139,17 @@ int dglInit(const DGLConfig *cfg)
     {
         const char *e = getenv("DGL_EXIT_AFTER");
         exit_after = e ? strtoul(e, NULL, 10) : 0;
+        if (exit_after) {               /* the harness pairs each DGL-START with a DGL-EXIT */
+            exit_pending = 1;
+            DGL_ERR("DGL-START %dx%d exit_after=%lu", c.width, c.height, exit_after);
+        }
         e = getenv("DGL_STATS");
-        stats_on = e && *e && *e != '0';
+        stats_on = e ? atoi(e) : 0;
         stats_t0 = sys_time_us();
         stats_tris0 = setup_stats.tris;
     }
     dgl_gl_reset();
+    dgl_gl_error_hook = log_gl_error;
     dgl_gl_set_window(c.width, c.height);
     dgl_textures_reset(dgl_ctx.heap_off, dgl_ctx.vram_bytes);
     dgl_emit_install();
@@ -141,6 +162,15 @@ int dglInit(const DGLConfig *cfg)
 void dglShutdown(void)
 {
     dgl_teardown();
+}
+
+/* Every way out (dglShutdown, DGL_EXIT_AFTER, exit, a fault) ends here once. */
+void dgl_note_exit(void)
+{
+    if (!exit_pending)
+        return;
+    exit_pending = 0;
+    DGL_ERR("DGL-EXIT frames=%lu", stats.swaps);
 }
 
 void dglSetVSync(int enabled)
@@ -160,19 +190,25 @@ void dglSwapBuffers(void)
     stats.swaps++;
     stats.frames++;
     stats.triangles = setup_stats.tris;
+    stats.stub_calls = dgl_stub_calls;
     if (stats_on) {
         uint32_t now = sys_time_us(), dt = now - stats_t0;
         if (dt >= 1000000u) {
-            DGL_ERR("DGL-STAT fps=%.1f tris/s=%.0f swaps=%lu tex_kb=%lu",
+            DGL_ERR("DGL-STAT fps=%.1f tris/s=%.0f swaps=%lu tex_kb=%lu stubs=%lu",
                     (stats.swaps - stats_swaps0) * 1e6 / dt, (setup_stats.tris - stats_tris0) * 1e6 / dt, stats.swaps,
-                    (unsigned long)(dgl_vram_used() >> 10));
+                    (unsigned long)(dgl_vram_used() >> 10), dgl_stub_calls);
+            if (stats_on >= 2) {
+                DGL_ERR("DGL-PRIMS begins=%lu skipped=%lu tris=%lu clipped=%lu zero=%lu culled=%lu",
+                        dgl_prims.begins, dgl_prims.skipped, dgl_prims.tris_in, dgl_prims.clipped,
+                        dgl_prims.zero_area, dgl_prims.culled);
+                memset(&dgl_prims, 0, sizeof dgl_prims);
+            }
             stats_t0 = now;
             stats_tris0 = setup_stats.tris;
             stats_swaps0 = stats.swaps;
         }
     }
     if (exit_after && stats.swaps >= exit_after) {
-        DGL_ERR("DGL-EXIT frames=%lu", stats.swaps);
         dglShutdown();
         exit(0);
     }
@@ -187,7 +223,14 @@ void dglSwapBuffers(void)
     dgl_gl.dirty |= DGL_DIRTY_TARGET | DGL_DIRTY_RASTER;    /* the target write reset MACCESS */
 }
 
+void dgl_retarget(void)
+{
+    if (dgl_ctx.active)
+        set_target();                   /* through the FIFO, so queued draws keep their buffer */
+}
+
 const DGLStats *dglGetStats(void)
 {
+    stats.stub_calls = dgl_stub_calls;
     return &stats;
 }

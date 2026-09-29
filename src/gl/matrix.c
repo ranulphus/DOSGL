@@ -180,3 +180,20 @@ void APIENTRY glFrustum(GLdouble l, GLdouble r, GLdouble b, GLdouble t, GLdouble
     m[14] = (GLfloat)(-2 * f * n / (f - n));
     glMultMatrixf(m);
 }
+
+/* ---- Double-precision forms (GL 1.1) -------------------------------------- */
+static void to_float(const GLdouble *d, GLfloat *f)
+{
+    int i;
+    for (i = 0; i < 16; i++)
+        f[i] = (GLfloat)d[i];
+}
+
+void APIENTRY glLoadMatrixd(const GLdouble *m) { GLfloat f[16]; to_float(m, f); glLoadMatrixf(f); }
+void APIENTRY glMultMatrixd(const GLdouble *m) { GLfloat f[16]; to_float(m, f); glMultMatrixf(f); }
+void APIENTRY glTranslated(GLdouble x, GLdouble y, GLdouble z) { glTranslatef((GLfloat)x, (GLfloat)y, (GLfloat)z); }
+void APIENTRY glScaled(GLdouble x, GLdouble y, GLdouble z) { glScalef((GLfloat)x, (GLfloat)y, (GLfloat)z); }
+void APIENTRY glRotated(GLdouble a, GLdouble x, GLdouble y, GLdouble z)
+{
+    glRotatef((GLfloat)a, (GLfloat)x, (GLfloat)y, (GLfloat)z);
+}

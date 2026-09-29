@@ -61,7 +61,16 @@ typedef struct {
     GLdouble clear_depth, depth_near, depth_far;
     GLfloat fog_density, fog_start, fog_end, fog_color[4];
     GLenum  hint_perspective, hint_fog;
-    GLint   pack_align, unpack_align;
+    GLint   pack_align, unpack_align, unpack_row_length;
+    /* Rasterisation extras (GL 1.1): point size and line width (screen-space
+     * quads), polygon offset, and stencil state accepted with no stencil
+     * buffer (0 bits: the test always passes, PRD §2.2). */
+    GLfloat point_size, line_width, offset_factor, offset_units;
+    int     offset_fill, stencil_test;
+    GLenum  stencil_func, stencil_fail, stencil_zfail, stencil_zpass;
+    GLint   stencil_ref, clear_stencil;
+    GLuint  stencil_mask, stencil_writemask;
+    GLenum  draw_buffer, read_buffer;
     /* Current vertex attributes and arrays */
     GLfloat cur_color[4], cur_tex[2];
     dgl_array va, ca, ta;
@@ -75,6 +84,14 @@ extern dgl_gl_state dgl_gl;
 void dgl_gl_reset(void);                                  /* GL defaults for a w x h window */
 void dgl_gl_set_window(int w, int h);
 void dgl_gl_error(GLenum e);                              /* record the first error */
+extern void (*dgl_gl_error_hook)(GLenum e, void *caller); /* context.c logs the first few */
+
+/* Where primitives go (DGL_STATS=2 prints them every second as DGL-PRIMS). */
+typedef struct {
+    unsigned long begins, skipped;              /* primitives; skipped by validation */
+    unsigned long tris_in, clipped, zero_area, culled;
+} dgl_prim_counts;
+extern dgl_prim_counts dgl_prims;
 
 /* matrix.c */
 void dgl_mat_identity(dgl_mat4 *r);

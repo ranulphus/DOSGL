@@ -38,6 +38,11 @@ void dgl_gl_reset(void)
     dgl_gl.fog_end = 1.0f;
     dgl_gl.hint_perspective = dgl_gl.hint_fog = GL_DONT_CARE;
     dgl_gl.pack_align = dgl_gl.unpack_align = 4;
+    dgl_gl.point_size = dgl_gl.line_width = 1.0f;
+    dgl_gl.stencil_func = GL_ALWAYS;
+    dgl_gl.stencil_fail = dgl_gl.stencil_zfail = dgl_gl.stencil_zpass = GL_KEEP;
+    dgl_gl.stencil_mask = dgl_gl.stencil_writemask = ~0u;
+    dgl_gl.draw_buffer = dgl_gl.read_buffer = GL_BACK;
     dgl_gl.cur_color[0] = dgl_gl.cur_color[1] = dgl_gl.cur_color[2] = dgl_gl.cur_color[3] = 1.0f;
     dgl_gl.va.size = 4; dgl_gl.va.type = GL_FLOAT;
     dgl_gl.ca.size = 4; dgl_gl.ca.type = GL_FLOAT;
@@ -45,8 +50,13 @@ void dgl_gl_reset(void)
     dgl_gl.dirty = ~0u;
 }
 
+void (*dgl_gl_error_hook)(GLenum e, void *caller);
+dgl_prim_counts dgl_prims;
+
 void dgl_gl_error(GLenum e)
 {
+    if (dgl_gl_error_hook)
+        dgl_gl_error_hook(e, __builtin_return_address(0));
     if (dgl_gl.error == GL_NO_ERROR)       /* GL keeps the first error until read */
         dgl_gl.error = e;
 }

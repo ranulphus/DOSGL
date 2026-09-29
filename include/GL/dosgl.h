@@ -40,6 +40,7 @@ typedef struct {
 
 typedef struct {
     unsigned long frames, triangles, swaps, texture_bytes, fifo_stalls;
+    unsigned long stub_calls;       /* calls to GL functions DOS-GL only stubs (v1.1) */
 } DGLStats;
 
 /* The library's version string, e.g. "DOS-GL 0.1 (<build>)". */
@@ -56,6 +57,11 @@ void dglSetVSync(int enabled);
 const char *dglGetErrorString(void);
 const DGLDeviceInfo *dglGetDeviceInfo(void);
 const DGLStats *dglGetStats(void);
+
+/* The address of a GL function by name: every GL 1.1 function and the
+   extension functions DOS-GL implements; NULL for anything else. Whether an
+   extension may be used is still decided by glGetString(GL_EXTENSIONS). (v1.1) */
+void *dglGetProcAddress(const char *name);
 
 #ifdef __cplusplus
 }

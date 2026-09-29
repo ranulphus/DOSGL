@@ -43,7 +43,13 @@ build/build_id: FORCE
 build/djgpp/src/dgl/version.o: build/build_id
 .PHONY: FORCE
 
-$(LIB): $(DGL_SRCS:%.c=build/djgpp/%.o) $(HAL_SRCS:%.c=build/djgpp/%.o)
+# Generated: stubs for the GL 1.1 functions not implemented, and the
+# dglGetProcAddress table (tools/gen_stubs.py; files rewritten only on change).
+GEN_SRCS := build/gen/stubs.c build/gen/procs.c
+$(GEN_SRCS) &: tools/gen_stubs.py src/gl/gl11.api $(DGL_SRCS)
+	$(Q)python3 tools/gen_stubs.py src/gl src/dgl build/gen
+
+$(LIB): $(DGL_SRCS:%.c=build/djgpp/%.o) $(GEN_SRCS:%.c=build/djgpp/%.o) $(HAL_SRCS:%.c=build/djgpp/%.o)
 	@mkdir -p $(dir $@)
 	$(Q)echo "  AR      $@"
 	$(Q)rm -f $@ && $(DJAR) rcs $@ $^

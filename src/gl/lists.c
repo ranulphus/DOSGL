@@ -29,6 +29,7 @@ typedef struct {
 
 static list_t *lists;
 static GLuint nlists;
+static GLuint list_base;                /* glListBase, for glCallLists */
 static GLuint compiling;            /* list being compiled, 0 = none */
 static GLenum compile_mode;
 
@@ -183,4 +184,33 @@ void APIENTRY glCallList(GLuint list)
     l = &lists[list];
     for (i = 0; i < l->n; i++)
         dgl_assemble(l->prim[i].mode, l->prim[i].count, l->prim[i].idx, 0, l->prim[i].v);
+}
+
+GLboolean APIENTRY glIsList(GLuint list)
+{
+    return (GLboolean)(list && list < nlists && lists[list].used);
+}
+
+void APIENTRY glListBase(GLuint base) { list_base = base; }
+GLuint dgl_list_base(void) { return list_base; }
+
+/* glCallLists: each name (of the given type) offset by the list base. */
+void APIENTRY glCallLists(GLsizei n, GLenum type, const GLvoid *names)
+{
+    GLsizei i;
+    if (n < 0) { dgl_gl_error(GL_INVALID_VALUE); return; }
+    for (i = 0; i < n; i++) {
+        GLuint name;
+        switch (type) {
+        case GL_BYTE: name = (GLuint)((const signed char *)names)[i]; break;
+        case GL_UNSIGNED_BYTE: name = ((const unsigned char *)names)[i]; break;
+        case GL_SHORT: name = (GLuint)((const short *)names)[i]; break;
+        case GL_UNSIGNED_SHORT: name = ((const unsigned short *)names)[i]; break;
+        case GL_INT: name = (GLuint)((const int *)names)[i]; break;
+        case GL_UNSIGNED_INT: name = ((const unsigned int *)names)[i]; break;
+        case GL_FLOAT: name = (GLuint)((const float *)names)[i]; break;
+        default: dgl_gl_error(GL_INVALID_ENUM); return;
+        }
+        glCallList(list_base + name);
+    }
 }
