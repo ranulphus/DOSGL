@@ -94,6 +94,11 @@ int dglInit(const DGLConfig *cfg)
     dgl_ctx.double_buffer = c.double_buffer != 0;
     dgl_ctx.depth_bits = c.depth_bits ? 16 : 0;
     dgl_ctx.vsync = c.vsync != 0;
+    {
+        const char *e = getenv("DGL_VSYNC");     /* a test or user override */
+        if (e && *e)
+            dgl_ctx.vsync = *e != '0';
+    }
     dgl_ctx.vram_bytes = mga.vram_bytes;
     fb = (uint32_t)dgl_ctx.pitch_px * (uint32_t)c.height * 2u;
     dgl_ctx.front_off = 0;

@@ -7,6 +7,9 @@
 /* Hardware texel formats (TEXCTL.texformat codes). */
 enum { DGL_TW15 = 2, DGL_TW16 = 3, DGL_TW12 = 4 };
 enum { DGL_ALPHA_OPAQUE, DGL_ALPHA_BINARY, DGL_ALPHA_GRADIENT };
+/* Internal format classes (what the texture keeps of its texels). */
+enum { DGL_IF_RGBA, DGL_IF_RGB, DGL_IF_RGB5_A1, DGL_IF_LUMINANCE, DGL_IF_LUMINANCE_ALPHA, DGL_IF_ALPHA,
+       DGL_IF_INTENSITY };
 
 /* texconv.c */
 int      dgl_alpha_class(const unsigned char *rgba, long n);
@@ -14,6 +17,9 @@ int      dgl_hwfmt_for_class(int cls);
 uint16_t dgl_pack_texel(int hwfmt, unsigned r, unsigned g, unsigned b, unsigned a);
 void     dgl_convert_rgba(int hwfmt, const unsigned char *rgba, long n, uint16_t *out);
 int      dgl_to_rgba(GLenum format, const unsigned char *src, long n, unsigned char *dst);
+int      dgl_ifmt_class(GLint internalformat);                 /* DGL_IF_*, -1 if not a GL 1.1 format */
+void     dgl_apply_ifmt(int ifc, unsigned char *rgba, long n);  /* keep what the class keeps */
+uint16_t dgl_pack_grey565(unsigned l);                          /* RGB565 grey, green from red */
 int      dgl_format_bytes(GLenum format);
 
 /* vram.c */
@@ -31,7 +37,8 @@ void     dgl_vram_sync_done(void);         /* the engine is idle: free the retir
 
 typedef struct {
     int      w, h;                 /* as uploaded */
-    unsigned char *rgba;           /* shadow copy, RGBA8 */
+    int      ifc;                  /* internal format class, DGL_IF_* */
+    unsigned char *rgba;           /* shadow copy, RGBA8, already reduced to the class */
 } dgl_level;
 
 typedef struct dgl_texture {
@@ -42,6 +49,7 @@ typedef struct dgl_texture {
     int      max_level;
     /* Hardware copy: every defined level from 0, in one format. */
     int      resident, dirty, hwfmt, hw_levels;
+    int      grey;                  /* luminance or intensity: RGB565 greys stay grey */
     uint32_t vram_off, level_off[DGL_MAX_LEVELS], vram_size;
     int      hw_w_log2, hw_h_log2;  /* level 0 as stored (>= 8 texels) */
     uint32_t drawn;                 /* dgl_sync_epoch + 1 when last drawn, 0 = never */

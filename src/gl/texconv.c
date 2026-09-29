@@ -62,6 +62,61 @@ int dgl_to_rgba(GLenum format, const unsigned char *src, long n, unsigned char *
     return 0;
 }
 
+/* GL 1.1 internal formats (§3.8.1): the base format decides which
+ * components a texture keeps; the sized variants are hints DOS-GL maps to
+ * its three 16-bit formats by alpha (dgl_hwfmt_for_class), except that
+ * RGB5_A1 never takes ARGB4444. */
+int dgl_ifmt_class(GLint f)
+{
+    switch (f) {
+    case 4: case GL_RGBA: case GL_RGBA2: case GL_RGBA4: case GL_RGBA8: case GL_RGB10_A2: case GL_RGBA12:
+    case GL_RGBA16:
+        return DGL_IF_RGBA;
+    case 3: case GL_RGB: case GL_R3_G3_B2: case GL_RGB4: case GL_RGB5: case GL_RGB8: case GL_RGB10: case GL_RGB12:
+    case GL_RGB16: case GL_RGB2_EXT:
+        return DGL_IF_RGB;
+    case GL_RGB5_A1:
+        return DGL_IF_RGB5_A1;
+    case 1: case GL_LUMINANCE: case GL_LUMINANCE4: case GL_LUMINANCE8: case GL_LUMINANCE12: case GL_LUMINANCE16:
+        return DGL_IF_LUMINANCE;
+    case 2: case GL_LUMINANCE_ALPHA: case GL_LUMINANCE4_ALPHA4: case GL_LUMINANCE6_ALPHA2:
+    case GL_LUMINANCE8_ALPHA8: case GL_LUMINANCE12_ALPHA4: case GL_LUMINANCE12_ALPHA12: case GL_LUMINANCE16_ALPHA16:
+        return DGL_IF_LUMINANCE_ALPHA;
+    case GL_ALPHA: case GL_ALPHA4: case GL_ALPHA8: case GL_ALPHA12: case GL_ALPHA16:
+        return DGL_IF_ALPHA;
+    case GL_INTENSITY: case GL_INTENSITY4: case GL_INTENSITY8: case GL_INTENSITY12: case GL_INTENSITY16:
+        return DGL_IF_INTENSITY;
+    default:
+        return -1;
+    }
+}
+
+/* The texel as the texture environment will see it: luminance and
+ * intensity come from red (GL's conversion from RGBA), missing colour is
+ * white and missing alpha is 1. */
+void dgl_apply_ifmt(int ifc, unsigned char *p, long n)
+{
+    long i;
+    for (i = 0; i < n; i++, p += 4)
+        switch (ifc) {
+        case DGL_IF_RGB: p[3] = 255; break;
+        case DGL_IF_LUMINANCE: p[1] = p[2] = p[0]; p[3] = 255; break;
+        case DGL_IF_LUMINANCE_ALPHA: p[1] = p[2] = p[0]; break;
+        case DGL_IF_ALPHA: p[0] = p[1] = p[2] = 255; break;
+        case DGL_IF_INTENSITY: p[1] = p[2] = p[3] = p[0]; break;
+        default: break;
+        }
+}
+
+/* Grey in RGB565 with green derived from the quantised red, so a ramp of
+ * greys (a luminance lightmap) never alternates between green and magenta
+ * tints. */
+uint16_t dgl_pack_grey565(unsigned l)
+{
+    unsigned r = q(l, 5);
+    return (uint16_t)((r << 11) | (((r << 1) | (r >> 4)) << 5) | r);
+}
+
 int dgl_format_bytes(GLenum format)
 {
     switch (format) {

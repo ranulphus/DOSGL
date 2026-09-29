@@ -413,12 +413,15 @@ static int check_upload(GLenum target, GLint level, GLenum format, GLenum type)
 }
 
 /* Copy client rows (with GL_UNPACK_ALIGNMENT) into RGBA8. */
-static void unpack(GLenum format, const void *pixels, int w, int h, unsigned char *dst, int dst_stride)
+static void unpack(GLenum format, const void *pixels, int w, int h, unsigned char *dst, int dst_stride, int ifc)
 {
     int bytes = dgl_format_bytes(format), y;
     int stride = (w * bytes + dgl_gl.unpack_align - 1) / dgl_gl.unpack_align * dgl_gl.unpack_align;
-    for (y = 0; y < h; y++)
-        dgl_to_rgba(format, (const unsigned char *)pixels + (size_t)y * stride, w, dst + (size_t)y * dst_stride);
+    for (y = 0; y < h; y++) {
+        unsigned char *d = dst + (size_t)y * dst_stride;
+        dgl_to_rgba(format, (const unsigned char *)pixels + (size_t)y * stride, w, d);
+        dgl_apply_ifmt(ifc, d, w);
+    }
 }
 
 void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei w, GLsizei h,
@@ -426,11 +429,10 @@ void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat, GLs
 {
     dgl_texture *t;
     dgl_level *L;
-    int max = mga.max_tex_size ? mga.max_tex_size : 1024;
-    (void)internalformat;               /* DOS-GL chooses the format from the texels (§8.3) */
+    int max = mga.max_tex_size ? mga.max_tex_size : 1024, ifc = dgl_ifmt_class(internalformat);
     if (!check_upload(target, level, format, type))
         return;
-    if (border != 0 || !is_pow2(w) || !is_pow2(h) || w > max || h > max) {
+    if (ifc < 0 || border != 0 || !is_pow2(w) || !is_pow2(h) || w > max || h > max) {
         dgl_gl_error(GL_INVALID_VALUE);
         return;
     }
@@ -441,10 +443,18 @@ void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat, GLs
     L->rgba = (unsigned char *)calloc((size_t)w * h, 4);
     if (!L->rgba) { L->w = L->h = 0; dgl_gl_error(GL_OUT_OF_MEMORY); return; }
     L->w = w; L->h = h;
+    L->ifc = ifc;
     if (pixels)
-        unpack(format, pixels, w, h, L->rgba, w * 4);
+        unpack(format, pixels, w, h, L->rgba, w * 4, ifc);
+    else
+        dgl_apply_ifmt(ifc, L->rgba, (long)w * h);   /* undefined texels: at least the right class */
     t->dirty = 1;
     dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
+}
+
+static uint16_t pack(const dgl_texture *t, int hwfmt, const unsigned char *p)
+{
+    return t->grey && hwfmt == DGL_TW16 ? dgl_pack_grey565(p[0]) : dgl_pack_texel(hwfmt, p[0], p[1], p[2], p[3]);
 }
 
 /* Write a changed rectangle straight into the hardware copy: only when the
@@ -471,7 +481,7 @@ static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
         volatile uint16_t *dst = (volatile uint16_t *)(mga_fb + t->level_off[level]) + (size_t)(y + j) * hw_w + x;
         const unsigned char *p = L->rgba + ((size_t)(y + j) * L->w + x) * 4;
         for (i = 0; i < w; i++, p += 4)
-            dst[i] = dgl_pack_texel(t->hwfmt, p[0], p[1], p[2], p[3]);
+            dst[i] = pack(t, t->hwfmt, p);
     }
     dgl_texc.sub_fast++;
     return 1;
@@ -491,7 +501,7 @@ void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsi
         dgl_gl_error(GL_INVALID_VALUE);
         return;
     }
-    unpack(format, pixels, w, h, L->rgba + ((size_t)y * L->w + x) * 4, L->w * 4);
+    unpack(format, pixels, w, h, L->rgba + ((size_t)y * L->w + x) * 4, L->w * 4, L->ifc);
     if (w && h && !sub_in_place(t, level, x, y, w, h)) {
         dgl_texc.sub_full++;
         t->dirty = 1;
@@ -515,7 +525,7 @@ static void write_level(const dgl_texture *t, int l, int hwfmt, uint32_t off, in
             if (sx >= L->w) sx = t->wrap_s != GL_REPEAT ? L->w - 1 : sx % L->w;
             if (sy >= L->h) sy = t->wrap_t != GL_REPEAT ? L->h - 1 : sy % L->h;
             p = L->rgba + ((size_t)sy * L->w + sx) * 4;
-            dst[y * hw_w + x] = dgl_pack_texel(hwfmt, p[0], p[1], p[2], p[3]);
+            dst[y * hw_w + x] = pack(t, hwfmt, p);
         }
 }
 
@@ -541,6 +551,10 @@ int dgl_texture_ready(dgl_texture *t)
         if (c > cls)
             cls = c;
     }
+    if (cls == DGL_ALPHA_GRADIENT && t->level[0].ifc == DGL_IF_RGB5_A1)
+        cls = DGL_ALPHA_BINARY;                      /* one alpha bit, as asked */
+    t->grey = t->level[0].ifc == DGL_IF_LUMINANCE || t->level[0].ifc == DGL_IF_INTENSITY ||
+              t->level[0].ifc == DGL_IF_LUMINANCE_ALPHA;
     hw_w = t->level[0].w < 8 ? 8 : t->level[0].w;
     hw_h = t->level[0].h < 8 ? 8 : t->level[0].h;
     for (l = 0; l < levels; l++)
