@@ -27,6 +27,10 @@ make loopa TEST=hello CARD=g450      # run an example in 86Box: out/hello/
 
 Consumers link `-lGL` and include `<GL/gl.h>` and `<GL/dosgl.h>`.
 
+New games can use SDL3 with it: `make sdl` builds the pinned SDL3 with
+OpenGL windows through DOS-GL (`SDL_WINDOW_OPENGL`, `SDL_GL_*`) beside SDL's
+DOS keyboard, mouse, gameport and Sound Blaster support; see `docs/sdl.md`.
+
 ## Licence
 
 MIT (`LICENSE`); third-party material in `THIRD_PARTY.md`.

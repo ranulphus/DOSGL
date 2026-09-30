@@ -20,7 +20,9 @@ void dgl_teardown(void)
     graphics = 0;
     if (mga_mmio && engine_sync(100000) != 0)
         engine_reset();
-    vbe_set_text_mode();
+#ifndef DGL_RIG
+    vbe_set_text_mode();                        /* Loop C never left the host's mode */
+#endif
     dgl_ctx.active = 0;
 }
 

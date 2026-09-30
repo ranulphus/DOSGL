@@ -7,5 +7,5 @@
 
 const char *dglVersion(void)
 {
-    return "DOS-GL 0.2 (" DGL_BUILD_ID ")";
+    return "DOS-GL 0.3 (" DGL_BUILD_ID ")";
 }

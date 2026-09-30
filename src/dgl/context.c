@@ -68,6 +68,19 @@ static void set_target(void)
     engine_set_clip(0, 0, dgl_ctx.width, dgl_ctx.height);
 }
 
+/* Where the display starts. Loop C (DGL_RIG) shows nothing: the host's
+ * driver may own the screen. */
+static uint32_t rig_base;
+static void show_start(uint32_t off, int pitch_bytes)
+{
+#ifdef DGL_RIG
+    (void)off;
+    (void)pitch_bytes;
+#else
+    vbe_set_display_start(off, pitch_bytes, 16);
+#endif
+}
+
 /* Scale the render buffer into a display buffer: the hidden one for a
  * swap, the one on screen for GL_FRONT or single buffering. The engine's
  * texture, blend and mask registers are overwritten: GL re-emits them. */
@@ -156,6 +169,16 @@ int dglInit(const DGLConfig *cfg)
         return -1;
     }
     dgl_crash_install();
+#ifdef DGL_RIG
+    /* Loop C: nothing is shown. The buffers start at DGL_RIG_VRAM_BASE (KB;
+     * above the host's console when its driver is still bound), and neither
+     * the mode, the DAC nor the display start is touched. */
+    (void)pitch;
+    {
+        const char *e = getenv("DGL_RIG_VRAM_BASE");
+        rig_base = e ? (uint32_t)strtoul(e, NULL, 10) * 1024u : 0;
+    }
+#else
     if (vbe_set_mode(&pl->disp, dgl_ctx.disp_pitch_px, &pitch) != 0 || pitch != dgl_ctx.disp_pitch_px) {
         dgl_teardown();
         dgl_set_error("VBE mode %03x with pitch %d failed (BIOS gave %d)", pl->disp.mode, dgl_ctx.disp_pitch_px,
@@ -163,6 +186,8 @@ int dglInit(const DGLConfig *cfg)
         return -1;
     }
     vbe_set_zoom(pl->zoom);
+#endif
+#ifndef DGL_RIG
     {
         /* VBE's total memory can be short: Matrox's G200 BIOS reports 2 MB of
          * 8 in 86Box. In graphics mode VRAM can be written freely, so probe it
@@ -175,13 +200,14 @@ int dglInit(const DGLConfig *cfg)
             dgl_note_vram(probed);
         }
     }
+#endif
     /* The layout, checked against the VRAM found (the BIOS can under-report). */
     fb = (uint32_t)dgl_ctx.pitch_px * (uint32_t)c.height * 2u;
-    render = 0;
+    render = rig_base;
     if (dgl_ctx.scaled) {
         uint32_t disp = (uint32_t)dgl_ctx.disp_pitch_px * (uint32_t)pl->disp.height * 2u;
-        dgl_ctx.disp_off[0] = 0;
-        dgl_ctx.disp_off[1] = ALIGN4K(disp);
+        dgl_ctx.disp_off[0] = rig_base;
+        dgl_ctx.disp_off[1] = ALIGN4K(rig_base + disp);
         render = ALIGN4K(dgl_ctx.disp_off[1] + disp);
     }
     dgl_ctx.front_off = render;
@@ -195,6 +221,7 @@ int dglInit(const DGLConfig *cfg)
         return -1;
     }
     engine_init(dgl_ctx.pitch_px, 16);
+#ifndef DGL_RIG
     {
         /* 16-bit pixels index the DAC palette on these chips, and the BIOS
          * leaves it non-linear: load an identity ramp. */
@@ -204,6 +231,7 @@ int dglInit(const DGLConfig *cfg)
             ramp[i] = (uint8_t)i;
         dac_set_ramp(ramp);
     }
+#endif
     dgl_ctx.front_is_a = 1;
     dgl_ctx.active = 1;
     /* Clear everything the context owns, then draw into the hidden buffer. */
@@ -225,10 +253,8 @@ int dglInit(const DGLConfig *cfg)
     if (dgl_ctx.z_off)
         engine_fill_depth(0, 0, c.width, c.height, 0xFFFF);
     engine_sync(500000);
-    if (dgl_ctx.scaled)
-        vbe_set_display_start(dgl_ctx.disp_off[0], dgl_ctx.disp_pitch_px * 2, 16);
-    else
-        vbe_set_display_start(dgl_ctx.front_off, dgl_ctx.pitch_px * 2, 16);
+    show_start(dgl_ctx.scaled ? dgl_ctx.disp_off[0] : dgl_ctx.front_off,
+               (dgl_ctx.scaled ? dgl_ctx.disp_pitch_px : dgl_ctx.pitch_px) * 2);
     {
         const char *e = getenv("DGL_EXIT_AFTER");
         exit_after = e ? strtoul(e, NULL, 10) : 0;
@@ -281,6 +307,51 @@ void dglSetVSync(int enabled)
     dgl_ctx.vsync = enabled != 0;
 }
 
+/* v1.3: the program's function to run while a swap waits (SDL's bridge:
+ * the DOS scheduler's yield, so the audio thread refills its ring). */
+static void (*wait_hook)(void *);
+static void *wait_hook_arg;
+
+void dglSetWaitHook(void (*fn)(void *arg), void *arg)
+{
+    wait_hook = fn;
+    wait_hook_arg = arg;
+}
+
+static void run_wait_hook(void)
+{
+    stats.wait_hooks++;
+    wait_hook(wait_hook_arg);
+}
+
+/* dgl_sync, with the hook run about once a millisecond while the engine
+ * finishes the frame. The engine's own timeout stays dgl_sync's: this only
+ * waits up to 200 ms before handing over to it. */
+static void drain_with_hook(void)
+{
+    if (wait_hook && mga_mmio) {
+        uint32_t start = sys_time_us(), last = start, now;
+        while (!engine_idle() && (now = sys_time_us()) - start < 200000u)
+            if (now - last >= 1000u) {
+                run_wait_hook();
+                last = sys_time_us();
+            }
+    }
+    dgl_sync();
+}
+
+/* The retrace wait: the hook runs once before it, never during it (a hook
+ * that ran past the start of the blank would cost a whole frame). */
+static void retrace_wait(void)
+{
+    uint32_t t0 = stats_on ? sys_time_us() : 0;
+    if (wait_hook)
+        run_wait_hook();
+    engine_vsync_wait(50000);
+    if (stats_on)
+        retrace_us += sys_time_us() - t0;
+}
+
 void dglSwapBuffers(void)
 {
     uint32_t show;
@@ -291,10 +362,10 @@ void dglSwapBuffers(void)
 #endif
     if (stats_on) {
         uint32_t t0 = sys_time_us();
-        dgl_sync();                     /* retired texture blocks go back to the heap */
+        drain_with_hook();              /* retired texture blocks go back to the heap */
         drain_us += sys_time_us() - t0;
     } else
-        dgl_sync();
+        drain_with_hook();
     stats.swaps++;
     dgl_snap_frame(stats.swaps);        /* DGL_SNAP: before the frame is shown */
     stats.frames++;
@@ -304,10 +375,10 @@ void dglSwapBuffers(void)
         uint32_t now = sys_time_us(), dt = now - stats_t0;
         if (dt >= 1000000u) {
             DGL_ERR("DGL-STAT fps=%.1f tris/s=%.0f swaps=%lu tex_kb=%lu stubs=%lu drain_ms=%lu retrace_ms=%lu "
-                    "present_ms=%lu", (stats.swaps - stats_swaps0) * 1e6 / dt,
+                    "present_ms=%lu hooks=%lu", (stats.swaps - stats_swaps0) * 1e6 / dt,
                     (setup_stats.tris - stats_tris0) * 1e6 / dt, stats.swaps, (unsigned long)(dgl_vram_used() >> 10),
                     dgl_stub_calls, (unsigned long)(drain_us / 1000), (unsigned long)(retrace_us / 1000),
-                    (unsigned long)((stats.present_us - present0_us) / 1000));
+                    (unsigned long)((stats.present_us - present0_us) / 1000), stats.wait_hooks);
             drain_us = retrace_us = 0;
             present0_us = stats.present_us;
             if (stats_on >= 2) {
@@ -336,27 +407,19 @@ void dglSwapBuffers(void)
         present(!dgl_ctx.double_buffer);
         if (!dgl_ctx.double_buffer)
             return;
-        if (dgl_ctx.vsync) {
-            uint32_t t0 = stats_on ? sys_time_us() : 0;
-            engine_vsync_wait(50000);
-            if (stats_on)
-                retrace_us += sys_time_us() - t0;
-        }
+        if (dgl_ctx.vsync)
+            retrace_wait();
         dgl_ctx.disp_front = !dgl_ctx.disp_front;
-        vbe_set_display_start(dgl_ctx.disp_off[dgl_ctx.disp_front], dgl_ctx.disp_pitch_px * 2, 16);
+        show_start(dgl_ctx.disp_off[dgl_ctx.disp_front], dgl_ctx.disp_pitch_px * 2);
         set_target();
         return;
     }
     if (!dgl_ctx.double_buffer)
         return;
     show = dgl_ctx.front_is_a ? dgl_ctx.back_off : dgl_ctx.front_off;
-    if (dgl_ctx.vsync) {
-        uint32_t t0 = stats_on ? sys_time_us() : 0;
-        engine_vsync_wait(50000);
-        if (stats_on)
-            retrace_us += sys_time_us() - t0;
-    }
-    vbe_set_display_start(show, dgl_ctx.pitch_px * 2, 16);
+    if (dgl_ctx.vsync)
+        retrace_wait();
+    show_start(show, dgl_ctx.pitch_px * 2);
     dgl_ctx.front_is_a = !dgl_ctx.front_is_a;
     set_target();
     dgl_gl.dirty |= DGL_DIRTY_TARGET | DGL_DIRTY_RASTER;    /* the target write reset MACCESS */

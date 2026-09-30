@@ -53,9 +53,13 @@ typedef struct {
     unsigned long frames, triangles, swaps, texture_bytes, fifo_stalls;
     unsigned long stub_calls;       /* calls to GL functions DOS-GL only stubs (v1.1) */
     unsigned long present_us;       /* scaled modes: time spent scaling frames (v1.2) */
+    unsigned long wait_hooks;       /* times the wait hook ran (v1.3) */
 } DGLStats;
 
-/* The library's version string, e.g. "DOS-GL 0.2 (<build>)". */
+/* The API's version: 0x0103 is 1.3 (DOS-GL 0.3), which added dglSetWaitHook. */
+#define DGL_API_VERSION 0x0103
+
+/* The library's version string, e.g. "DOS-GL 0.3 (<build>)". */
 const char *dglVersion(void);
 
 /* Enumeration: callable before dglInit, after device discovery. Returns the
@@ -68,6 +72,12 @@ int  dglInit(const DGLConfig *cfg);     /* 0 on success */
 void dglShutdown(void);
 void dglSwapBuffers(void);
 void dglSetVSync(int enabled);
+/* v1.3: fn(arg) runs while dglSwapBuffers waits for the drawing engine to
+ * finish the frame (about once a millisecond), and once before it waits for
+ * the retrace. A program with cooperative threads (SDL's on DOS) yields
+ * there, so its audio thread keeps up while the chip works. The hook must
+ * not call GL. NULL removes it. */
+void dglSetWaitHook(void (*fn)(void *arg), void *arg);
 const char *dglGetErrorString(void);
 const DGLDeviceInfo *dglGetDeviceInfo(void);
 const DGLStats *dglGetStats(void);

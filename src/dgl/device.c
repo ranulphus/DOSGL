@@ -57,6 +57,7 @@ static void judge(DGLMode *d, uint32_t vram)
     d->max_depth_bits = colour_bytes(d, d->can_double_buffer ? 2 : 1) + z + TEXTURE_RESERVE <= vram ? 16 : 0;
 }
 
+#ifndef DGL_RIG
 static void mode_cb(const mga_vbe_mode *m, void *ctx)
 {
     (void)ctx;
@@ -68,6 +69,7 @@ static void mode_cb(const mga_vbe_mode *m, void *ctx)
     if (nvbe < MAX_MODES)
         vbe_all[nvbe++] = *m;
 }
+#endif
 
 /* Add w x h as the planner would show it (native, zoomed or scaled). */
 static void add_mode(int w, int h)
@@ -119,8 +121,34 @@ int dgl_discover(void)
     info.mmio_phys = mga.mmio_phys;
     info.iload_phys = mga.iload_phys;
     info.fifo_depth = mga.fifo_depth;
+#ifdef DGL_RIG
+    /* Loop C (a Linux program on a card the host's own driver may be
+     * showing): no BIOS to ask. VRAM is DGL_RIG_VRAM_KB (default 8 MB), and
+     * the "BIOS modes" are the usual 16-bit sizes, which DOS-GL draws into
+     * VRAM without ever showing them (dgl_rig_* in context.c). */
+    {
+        static const int sizes[][2] = { { 640, 480 }, { 800, 600 }, { 1024, 768 }, { 1280, 1024 } };
+        const char *e = getenv("DGL_RIG_VRAM_KB");
+        uint32_t kb = e ? (uint32_t)strtoul(e, NULL, 10) : 8192u;
+        info.emulated = 0;
+        info.vram_bytes = kb * 1024u;
+        nvbe = 0;
+        for (i = 0; i < (int)(sizeof sizes / sizeof sizes[0]); i++) {
+            mga_vbe_mode *m = &vbe_all[nvbe++];
+            memset(m, 0, sizeof *m);
+            m->mode = (uint16_t)(0x100 + i);
+            m->width = (uint16_t)sizes[i][0];
+            m->height = (uint16_t)sizes[i][1];
+            m->bpp = 16;
+            m->pitch_bytes = (uint16_t)(dgl_pitch_for(sizes[i][0]) * 2);
+            m->lfb_phys = mga.fb_phys;
+            m->red_size = 5; m->red_pos = 11; m->green_size = 6; m->green_pos = 5; m->blue_size = 5;
+        }
+    }
+#else
     info.emulated = mga_detect_emulator();
     info.vram_bytes = vbe_total_memory();
+#endif
     if (!info.vram_bytes) {
         dgl_set_error("the card's VBE BIOS did not answer (VBE 2.0 or later needed)");
         return -1;
@@ -133,8 +161,12 @@ int dgl_discover(void)
         if (e && !strcmp(e, "force"))
             plan_flags |= MGA_PLAN_FORCE;
     }
+#ifdef DGL_RIG
+    nmodes = 0;
+#else
     nvbe = nmodes = 0;
     vbe_enumerate(mode_cb, NULL);
+#endif
     for (i = 0; i < nvbe; i++)
         add_mode(vbe_all[i].width, vbe_all[i].height);
     for (i = 0; i < (int)(sizeof virtual_sizes / sizeof virtual_sizes[0]); i++)

@@ -37,6 +37,13 @@ dglShutdown();
 - Games may leave the x87 FPU at 24-bit precision or change its rounding
   (Quake 2 does): drawing calls switch to their own control word and
   restore the caller's.
+- `dglSetWaitHook(fn, arg)` (0.3, `DGL_API_VERSION` 0x0103) runs `fn(arg)`
+  about once a millisecond while `dglSwapBuffers` waits for the drawing
+  engine to finish the frame, and once before it waits for the retrace
+  (never during it: a late return would cost a frame). Programs with
+  cooperative threads yield there; SDL's DOS-GL bridge does
+  (`docs/sdl.md`). The hook must not call GL. `DGL-STAT` counts it
+  (`hooks=`).
 - `dglGetProcAddress(name)` returns any GL 1.1 function and the extension
   functions DOS-GL implements (for programs that bind GL at run time).
 - Test hooks, over COM1:

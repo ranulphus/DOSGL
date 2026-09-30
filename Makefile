@@ -5,6 +5,7 @@
 #   make loopa TEST=hello [CARD=g450] [ARGS=--fail]    run an example in 86Box
 #   make quake / loopa-quake GAME=quake2   the Quake ports (tools/quake)
 #   make halflife / loopa-halflife MODE=play   Half-Life on Xash3D FWGS (tools/halflife)
+#   make sdl / sdl-examples / loopa-sdl   SDL3 on DOS with DOS-GL (tools/sdl, docs/sdl.md)
 #   make sync-hal         refresh third_party/mgahal from MGA-Glide
 #   make check-hal        verify the vendored copy against its MANIFEST
 include config.mk
@@ -28,7 +29,7 @@ HAL_SRCS := $(addprefix $(MGAHAL)/hal/,src/debug/serial.c src/pci.c src/chip.c s
 DGL_SRCS := $(wildcard src/dgl/*.c) $(wildcard src/gl/*.c)
 LIB := build/lib/libGL.a
 
-.PHONY: all lib examples tests-host loopa conform conform-dos conform-host classicube loopa-classicube quake loopa-quake halflife loopa-halflife setup-djgpp setup-ow dostools 86box sync-hal check-hal clean help
+.PHONY: all lib examples sdl sdl-host sdl-examples loopa-sdl tests-host loopa conform conform-dos conform-host classicube loopa-classicube quake loopa-quake halflife loopa-halflife setup-djgpp setup-ow dostools 86box sync-hal check-hal clean help
 all: lib examples
 
 build/djgpp/%.o: %.c
@@ -70,10 +71,35 @@ build/exe/PROBE.EXE: $(wildcard examples/probe/*.c) src/dgl/dgl.h
 build/exe/CLEAR.EXE: $(wildcard examples/clear/*.c) src/dgl/dgl.h
 build/exe/TRI.EXE: $(wildcard examples/tri/*.c) src/dgl/dgl.h
 build/exe/CUBE.EXE: $(wildcard examples/cube/*.c)
-build/exe/TEXCUBE.EXE: $(wildcard examples/texcube/*.c)
+build/exe/TEXCUBE.EXE: $(wildcard examples/texcube/*.c) examples/common/texscene.h
 build/exe/G4EXP.EXE: $(wildcard examples/g4exp/*.c) src/dgl/dgl.h src/gl/gl_tex.h
 build/exe/RESGL.EXE: $(wildcard examples/resgl/*.c)
 examples: $(foreach e,$(EXAMPLES),build/exe/$(shell echo $(e) | tr a-z A-Z).EXE)
+
+# SDL3 (third_party/sdl, pinned upstream, with tools/sdl/patches) as a static
+# library for DOS, and for Linux from the same source (docs/sdl.md). SDL
+# examples link it before libGL.a.
+SDL_LIB := build/sdl/dos/lib/libSDL3.a
+SDL_EXAMPLES := sdlinfo sdlkeys sdlbeep sdlgl sdlcrash
+$(SDL_LIB): third_party/sdl/CMakeLists.txt tools/sdl/build.sh $(wildcard tools/sdl/patches/*.patch) $(LIB)
+	$(Q)tools/sdl/build.sh
+sdl: $(SDL_LIB)
+# In the dev container: its libsdl2-dev brings every SDL build dependency
+# (X11, Wayland, PulseAudio, ALSA...); the static library loads them at run time.
+sdl-host:
+	$(Q)$(MGAHAL)/tools/dev tools/sdl/build.sh --host
+define sdl_example
+build/exe/$(1).EXE: $$(wildcard examples/$(2)/*.c) $(SDL_LIB) $(LIB) $(MGAHAL)/tests/shim/hx.c
+	@mkdir -p $$(dir $$@)
+	$$(Q)echo "  DJLD    $$@"
+	$$(Q)$$(DJCC) $$(DJ_CFLAGS) $$(DJ_TESTFLAGS) -Ibuild/sdl/dos/include -o $$@ $$(wildcard examples/$(2)/*.c) \
+	  $(MGAHAL)/tests/shim/hx.c $(SDL_LIB) $(LIB) -lm
+endef
+$(foreach e,$(SDL_EXAMPLES),$(eval $(call sdl_example,$(shell echo $(e) | tr a-z A-Z),$(e))))
+sdl-examples: $(foreach e,$(SDL_EXAMPLES),build/exe/$(shell echo $(e) | tr a-z A-Z).EXE)
+# The SDL examples in 86Box: keys typed, SB16 audio recorded (tools/sdl/loopa.sh).
+loopa-sdl: sdl-examples dostools
+	$(Q)tools/sdl/loopa.sh $(CARD)
 
 # Conformance tests (tests/conform, D16): DOS builds against libGL.a and
 # host builds against Mesa OSMesa (the references; built in the dev container).
@@ -149,6 +175,29 @@ build/host/test_%: tests/unit/test_%.c tests/unit/unit.c tests/unit/unit.h $$(UN
 tests-host: build/host/test_gl_h_abi $(UNIT_TESTS:%=build/host/test_%)
 	@set -e; for t in $^; do echo "== $$t"; $$t; done
 
+# Loop C: DOS-GL built for 32-bit Linux (x87 maths, as DJGPP's code) on a
+# real card through the HAL's Linux port: the conformance tests, static, for
+# a machine with a Matrox chip (tools/rig/run.py; docs/rig.md). Built in the
+# dev container (gcc-multilib).
+RIG_CFLAGS := -std=gnu99 -O2 -m32 -march=i586 -mfpmath=387 -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include \
+              -DDGL_RIG=1 -DDGL_BUILD_ID='"$(BUILD_ID)-rig"'
+RIG_HAL := $(filter-out %/port/djgpp.c,$(HAL_SRCS)) $(MGAHAL)/hal/port/linux.c
+build/rig/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(Q)$(HOST_CC) $(RIG_CFLAGS) -MMD -c -o $@ $<
+build/rig/libGL.a: $(DGL_SRCS:%.c=build/rig/%.o) $(GEN_SRCS:%.c=build/rig/%.o) $(RIG_HAL:%.c=build/rig/%.o)
+	$(Q)rm -f $@ && ar rcs $@ $^
+build/rig/conform/%: build/rig/libGL.a tests/conform/ct_rig.c
+	@mkdir -p $(dir $@)
+	$(Q)$(HOST_CC) $(RIG_CFLAGS) -static -DCT_NAME='"$*"' -o $@ $(wildcard tests/conform/$*_*.c) \
+	  tests/conform/ct_rig.c build/rig/libGL.a -lm
+build/rig/rigbench: build/rig/libGL.a tests/rig/rigbench.c
+	$(Q)$(HOST_CC) $(RIG_CFLAGS) -static -o $@ tests/rig/rigbench.c build/rig/libGL.a -lm
+rig-build: $(foreach t,$(CONFORM),build/rig/conform/$(t)) build/rig/rigbench
+rig:
+	$(MGAHAL)/tools/dev $(MAKE) -s rig-build
+.PHONY: rig rig-build
+
 # Loop A: the shared harness (86Box with the local patches), run in the
 # dev container. Outputs in out/<TEST>/.
 TEST ?= hello
@@ -179,4 +228,4 @@ clean:
 	rm -rf build out
 
 help:
-	@sed -n '3,8p' Makefile
+	@sed -n '3,9p' Makefile
