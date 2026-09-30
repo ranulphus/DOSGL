@@ -23,7 +23,8 @@
 #   CARD   g450 (default), g400 or g200
 # The engine's console output is in out/NAME/files/HL.TXT (and VER.TXT).
 # Environment: MAP, MEM (the PC's RAM in MB, default 128), SOUND (86Box sound
-# card, default sb16; none for no card), SHOTS (screenshot
+# card, default sb16; none for no card), MOUSE (ps2 with CuteMouse, default;
+# none), SHOTS (screenshot
 # seconds after boot), PRE (one more
 # RUN.BAT line), NAME (result directory out/NAME, default hl-MODE-CARD),
 # MGAHAL_DIR (another copy of the harness).
@@ -47,6 +48,8 @@ common=(--games-file "$here/games.json" --game halflife --card "$card" --out "$r
         --file "$b/DOSLFN.COM=D:/HL/DOSLFN.COM" --mem "${MEM:-128}" --timeout 1800 --idle 300)
 # SOUND=none: no sound card (the PC otherwise has a Sound Blaster 16 at its defaults)
 [ "${SOUND:-sb16}" != none ] && common+=(--sound "${SOUND:-sb16}" --pre "SET BLASTER=A220 I5 D1 H5 T6")
+# MOUSE=none: no mouse (otherwise PS/2 with CuteMouse; KEYS may hold SECONDS:mouse:DX:DY[:BUTTONS])
+common+=(--mouse "${MOUSE:-ps2}")
 [ -n "${SNAP:-}" ] && common+=(--pre "SET DGL_SNAP=$SNAP")
 [ -n "${PRE:-}" ] && common+=(--pre "$PRE")
 [ -n "${SHOTS:-}" ] && common+=(--shots "$SHOTS")
@@ -66,7 +69,8 @@ case $mode in
     set -- "${common[@]}" --pre "SET HL_AT=${AT:+$AT,}${FRAMES:-600} quit" "${start[@]}" --cmd "HLDGL.EXE $args > C:\\OUT\\HL.TXT" ;;
   keys|play)
     if [ "$mode" = play ]; then
-      KEYS=${KEYS:-$(sed 's/#.*//' "$here/keys/${PLAY:-h3play}.keys" | tr -s ' \n' ',' | sed 's/^,//; s/,$//')}
+      # one item per line (@TEXT anchors keep their spaces), # comments
+      KEYS=${KEYS:-$(sed 's/#.*//; s/^[[:space:]]*//; s/[[:space:]]*$//' "$here/keys/${PLAY:-h3play}.keys" | grep -v '^$' | paste -sd, -)}
     fi
     args=${*:-"-game valve +exec skill.cfg"}
     set -- "${common[@]}" --pre "SET HL_AT=${FRAMES:-100000} quit" --keys "${KEYS:?KEYS=SECONDS:SCANCODE,...}" \
@@ -96,12 +100,14 @@ if [ "$mode" = play ] && [ "${PLAY:-h3play}" = h3play ]; then
   check "quit" "HL-LOG >quit"
   check "SB16 DMA advancing" "HL-LOG Audio: Sound Blaster played [1-9][0-9]* samples"
   check "clean exit" "^HX-DONE 0"
-  peak=$(grep -oE "heap_peak_kb=[0-9]+" <<<"$log" | tail -1 | cut -d= -f2)
+  peak=$(grep -oE "heap_peak_kb=[0-9]+" <<<"$log" | tail -1 | cut -d= -f2 || true)
   if [ -n "$peak" ] && [ "$peak" -lt $(( ${MEM:-128} * 1024 )) ]; then echo "play: ok   heap peak ${peak} KB"; else echo "play: FAIL heap peak ${peak:-?} KB"; rc=1; fi
   if find "$root/out/$name/files" -iname CONFIG.CFG | grep -q .; then echo "play: ok   config.cfg written"; else echo "play: FAIL config.cfg"; rc=1; fi
 fi
 for f in VER.TXT HL.TXT; do
   p=$(find "$root/out/$name/files" -iname "$f" 2>/dev/null | head -1)
-  [ -n "$p" ] && { echo "== $f"; sed 's/\x1b\[[0-9;]*m//g' "$p" | grep -v '^\s*$' | tail -${TAIL:-12}; }
+  if [ -n "$p" ] && [ "${TAIL:-12}" -gt 0 ]; then
+    echo "== $f"; sed 's/\x1b\[[0-9;]*m//g' "$p" | grep -v '^\s*$' | tail -"${TAIL:-12}" || true
+  fi
 done
 exit $rc

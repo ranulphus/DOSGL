@@ -39,7 +39,10 @@ build/djgpp/PROBE.EXE: tests/hal/probe.c tests/shim/hx.c build/djgpp/libmgahal.a
 # The emulator's DPMI stack check (docs/loops.md): must PASS in Loop A.
 build/djgpp/STACKPG.EXE: tests/shim/stackpg.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
-dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/STACKPG.EXE
+# The --mouse check (docs/loops.md): must PASS in Loop A with --mouse ps2.
+build/djgpp/MOUSETST.EXE: tests/shim/mousetst.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
+dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE
 
 build/host/%.o: %.c
 	@mkdir -p $(dir $@)
