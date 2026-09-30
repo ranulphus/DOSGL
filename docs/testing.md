@@ -6,6 +6,7 @@
 | Loop A (86Box) | `make loopa TEST=probe CARD=g450` | a program on an emulated Matrox card (`g450`, `g400`, `g200`, `g100`) booting Matrox's own BIOS; results in `out/<test>/` |
 | Conformance | `make conform CARD=g450 [TESTS="t01 t04"]` | tests/conform: each test's DOS build in 86Box against its host build on Mesa OSMesa (the reference), after RGB565 quantisation with edge masks and the tolerances in `manifest.json` |
 | ClassiCube | `make loopa-classicube CARD=g450` | ClassiCube's GL 1.1 backend on DOS-GL, singleplayer for `CC_FRAMES` frames with the procedural test pack; screenshots in `out/classicube-<card>/` |
+| Half-Life | `make loopa-halflife MODE=boot\|server CARD=g450` | Xash3D FWGS and hlsdk-portable (the pinned forks in `tools/halflife/deps.mk`, one static executable, `tools/halflife/build.sh`) on the owner's WON data (`tools/halflife/fixtures.py`); `boot` prints `-version` and starts the client, `server` loads a map in `-dedicated` mode; the console is in `out/<name>/files/HL.TXT`. `tools/halflife/datacheck.py` lists what the game code names that the data lacks |
 | Loop B (bench) | `python3 third_party/mgahal/tools/bench/run.py --pc bench-g450 --exe build/exe/PROBE.EXE` | the same programs on a real PC (see `third_party/mgahal/docs/bench.md`); the 86Box virtual bench PC (`vpc.py`) dry-runs it |
 
 The harness, 86Box patches and bench tooling are MGA-Glide's, vendored in
