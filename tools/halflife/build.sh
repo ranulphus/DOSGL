@@ -89,6 +89,9 @@ if [ $work = 1 ]; then
   (cd "$hlsdk_dir/freevgui" && git ls-files -z -co --exclude-standard | tar --null -T - -cf -) |
     (mkdir -p "$src/hlsdk-portable/freevgui" && tar -x -C "$src/hlsdk-portable/freevgui")
   echo "work engine $(git -C "$xash_dir" describe --always --dirty) hlsdk $(git -C "$hlsdk_dir" describe --always --dirty)" >> "$staged"
+  export XASH_GIT_VERSION=$(git -C "$xash_dir" describe --always --dirty --abbrev=8)
+  export XASH_GIT_BRANCH=$(git -C "$xash_dir" rev-parse --abbrev-ref HEAD)
+  export XASH_GIT_COMMIT_DATE=$(git -C "$xash_dir" log -1 --format=%ci HEAD)
   echo "halflife: working trees of $xash_dir and $hlsdk_dir"
 else
   xc=$(pin XASH_COMMIT) hc=$(pin HLSDK_COMMIT)
@@ -114,9 +117,12 @@ else
   export_sub "$hlsdk_dir" "$hc" freevgui "$src/hlsdk-portable/freevgui" > /dev/null
   apply_patches "$hlsdk_dir" freevgui "$src/hlsdk-portable/freevgui"
   echo "halflife: engine ${xc:0:10}, hlsdk ${hc:0:10}"
+  export XASH_GIT_VERSION=${xc:0:8} XASH_GIT_BRANCH=dos
+  export XASH_GIT_COMMIT_DATE=$(git -C "$xash_dir" log -1 --format=%ci "$xc")
 fi
 
 # Build: the DJGPP target, every library static, OpenGL from this DOS-GL.
+# (The staged tree has no .git: XASH_GIT_* above give the engine its version.)
 [ -f "$root/build/lib/libGL.a" ] || { echo "halflife: no build/lib/libGL.a (make lib)" >&2; exit 1; }
 export DJGPP_PREFIX=$D LD_LIBRARY_PATH=$D/hostlib
 export LD=$D/bin/i586-pc-msdosdjgpp-ld OBJCOPY=$D/bin/i586-pc-msdosdjgpp-objcopy NM=$D/bin/i586-pc-msdosdjgpp-nm
