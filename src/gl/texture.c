@@ -22,6 +22,11 @@
 #define WINDOW_LEVELS 5
 
 static dgl_texture *tex[MAX_TEXTURES];
+/* Names from MAX_TEXTURES up: GL 1.1 lets a program bind any name without
+ * glGenTextures, and some pick large ones (Xash3D binds its sky sides to
+ * 5800-5805). Few enough for a list. */
+static dgl_texture **far_tex;
+static int nfar, capfar;
 static GLuint bound_u[2];                /* names bound to GL_TEXTURE_2D, per texture unit */
 #define bound (bound_u[dgl_gl.active_unit])   /* the active unit's */
 static uint32_t white_off;
@@ -57,12 +62,32 @@ int dgl_sync(void)
 }
 GLuint dgl_bound_name(void) { return bound; }
 
+static int far_index(GLuint name)
+{
+    int i;
+    for (i = 0; i < nfar; i++)
+        if (far_tex[i]->name == name)
+            return i;
+    return -1;
+}
+
 static dgl_texture *get(GLuint name, int create)
 {
     dgl_texture *t;
-    if (name >= MAX_TEXTURES)
-        return NULL;
-    t = tex[name];
+    if (name >= MAX_TEXTURES) {
+        int i = far_index(name);
+        t = i >= 0 ? far_tex[i] : NULL;
+        if (t || !create)
+            return t;
+        if (nfar == capfar) {
+            dgl_texture **n = (dgl_texture **)realloc(far_tex, (size_t)(capfar ? capfar * 2 : 16) * sizeof *n);
+            if (!n)
+                return NULL;
+            far_tex = n;
+            capfar = capfar ? capfar * 2 : 16;
+        }
+    } else
+        t = tex[name];
     if (!t && create) {
         t = (dgl_texture *)calloc(1, sizeof *t);
         if (!t)
@@ -72,10 +97,20 @@ static dgl_texture *get(GLuint name, int create)
         t->mag_filter = GL_LINEAR;
         t->wrap_s = t->wrap_t = GL_REPEAT;
         t->max_level = 1000;
-        tex[name] = t;
+        if (name >= MAX_TEXTURES)
+            far_tex[nfar++] = t;
+        else
+            tex[name] = t;
     }
     return t;
 }
+
+/* Every texture object: the table, then the list. */
+static dgl_texture *nth(int i)
+{
+    return i < MAX_TEXTURES ? tex[i] : far_tex[i - MAX_TEXTURES];
+}
+#define ALL_TEXTURES (MAX_TEXTURES + nfar)
 
 static void release_vram(dgl_texture *t)
 {
@@ -108,8 +143,8 @@ static int alloc_vram(const dgl_texture *self, uint32_t size, uint32_t *off)
             if (dgl_sync() == 0)
                 continue;
         }
-        for (i = 0; i < MAX_TEXTURES; i++) {
-            dgl_texture *c = tex[i];
+        for (i = 0; i < (GLuint)ALL_TEXTURES; i++) {
+            dgl_texture *c = nth((int)i);
             if (c && c != self && c->resident && !dgl_texture_busy(c) && (!lru || c->drawn < lru->drawn))
                 lru = c;
         }
@@ -130,8 +165,8 @@ static int alloc_vram(const dgl_texture *self, uint32_t size, uint32_t *off)
 
 static void destroy(GLuint name)
 {
-    dgl_texture *t = tex[name];
-    int l;
+    dgl_texture *t = get(name, 0);
+    int l, far = name >= MAX_TEXTURES ? far_index(name) : -1;   /* before t is freed */
     if (!t)
         return;
     release_vram(t);
@@ -141,7 +176,10 @@ static void destroy(GLuint name)
     }
     free(t->own);
     free(t);
-    tex[name] = NULL;
+    if (far >= 0)
+        far_tex[far] = far_tex[--nfar];
+    else
+        tex[name] = NULL;
 }
 
 void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end)
@@ -149,6 +187,8 @@ void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end)
     GLuint i;
     for (i = 0; i < MAX_TEXTURES; i++)
         destroy(i);
+    while (nfar)
+        destroy(far_tex[nfar - 1]->name);
     bound_u[0] = bound_u[1] = 0;
     dgl_palettes_reset();
     env_mode_u[0] = env_mode_u[1] = GL_MODULATE;
@@ -221,7 +261,7 @@ void APIENTRY glDeleteTextures(GLsizei n, const GLuint *names)
     GLsizei i;
     if (n < 0) { dgl_gl_error(GL_INVALID_VALUE); return; }
     for (i = 0; i < n; i++) {
-        if (!names[i] || names[i] >= MAX_TEXTURES)
+        if (!names[i])
             continue;
         if (names[i] == bound_u[0] || names[i] == bound_u[1]) {
             if (names[i] == bound_u[0]) bound_u[0] = 0;
@@ -234,7 +274,7 @@ void APIENTRY glDeleteTextures(GLsizei n, const GLuint *names)
 
 GLboolean APIENTRY glIsTexture(GLuint name)
 {
-    return (GLboolean)(name && name < MAX_TEXTURES && tex[name] != NULL);
+    return (GLboolean)(name && get(name, 0) != NULL);
 }
 
 /* ---- Parameters and environment ---------------------------------------- */
