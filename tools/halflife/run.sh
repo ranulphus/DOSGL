@@ -6,6 +6,9 @@
 #   MODE   boot     HLDGL -version, then a client start with the game
 #          server   HLDGL -dedicated: skill.cfg, then MAP (default c1a0) for a
 #                   few frames, and quit
+#          maps     HLDGL -dedicated, the console on COM1 (HL_SERIAL): MAPS
+#                   (default t0a0 c0a0 c1a0 c1a1) one after another, EVERY
+#                   (default 250) frames each, then quit (HL_AT)
 #   CARD   g450 (default), g400 or g200
 # The engine's console output is in out/NAME/files/HL.TXT (and VER.TXT).
 # Environment: MAP, SHOTS (screenshot seconds after boot), PRE (one more
@@ -26,6 +29,7 @@ hal=${MGAHAL_DIR:-$root/third_party/mgahal}
 b=$root/build/halflife
 name=${NAME:-hl-$mode-$card}
 common=(--games-file "$here/games.json" --game halflife --card "$card" --out "$root/out/$name"
+        --pre "SET HL_SERIAL=1" --pre "SET HL_CRASHLOG=C:\\OUT\\CRASH.TXT"
         --file "$b/HLDGL.EXE=D:/HL/HLDGL.EXE" --file "$b/EXTRAS.PK3=D:/HL/VALVE/EXTRAS.PK3"
         --file "$b/DOSLFN.COM=D:/HL/DOSLFN.COM" --timeout 1800 --idle 300)
 [ -n "${PRE:-}" ] && common+=(--pre "$PRE")
@@ -41,6 +45,14 @@ case $mode in
     # game's own exec of it runs
     args=${*:-"-dedicated -dev 2 -game valve +maxplayers 1 +exec skill.cfg +map ${MAP:-c1a0} +wait +wait +wait +wait +quit"}
     set -- "${common[@]}" "${start[@]}" --cmd "HLDGL.EXE $args > C:\\OUT\\HL.TXT" ;;
+  maps)
+    set -- ${MAPS:-t0a0 c0a0 c1a0 c1a1}
+    first=$1; shift
+    at="" f=0
+    for m in "$@"; do f=$((f + ${EVERY:-250})); at="$at${at:+,}$f map $m"; done
+    at="$at${at:+,}$((f + ${EVERY:-250})) quit"
+    args="-dedicated -dev 1 -game valve +maxplayers 1 +exec skill.cfg +map $first"
+    set -- "${common[@]}" --pre "SET HL_AT=$at" "${start[@]}" --cmd "HLDGL.EXE $args > C:\\OUT\\HL.TXT" ;;
   *) echo "run.sh: unknown mode $mode" >&2; exit 2 ;;
 esac
 cd "$root"
