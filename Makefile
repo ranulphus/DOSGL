@@ -4,7 +4,7 @@
 #   make tests-host       host unit tests (Linux gcc)
 #   make loopa TEST=hello [CARD=g450] [ARGS=--fail]    run an example in 86Box
 #   make quake / loopa-quake GAME=quake2   the Quake ports (tools/quake)
-#   make halflife / loopa-halflife MODE=boot   Half-Life on Xash3D FWGS (tools/halflife)
+#   make halflife / loopa-halflife MODE=play   Half-Life on Xash3D FWGS (tools/halflife)
 #   make sync-hal         refresh third_party/mgahal from MGA-Glide
 #   make check-hal        verify the vendored copy against its MANIFEST
 include config.mk
@@ -122,7 +122,7 @@ loopa-quake: quake dostools
 # Half-Life (tools/halflife): the pinned Xash3D FWGS and hlsdk-portable forks
 # built into one executable against libGL.a, run in 86Box on the owner's WON
 # data (tools/halflife/fixtures.py; never committed).
-#   make loopa-halflife MODE=boot|server [CARD=g450]
+#   make loopa-halflife MODE=boot|server|maps|map|keys|play [CARD=g450]
 halflife: lib
 	tools/halflife/build.sh
 loopa-halflife: halflife dostools

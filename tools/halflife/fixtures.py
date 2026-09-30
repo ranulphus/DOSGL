@@ -17,7 +17,9 @@ which the engine cannot play without ffmpeg).
 
 Added where the data has no file of that name, loose or in pak0.pak:
 tools/halflife/valve/, DOS-GL's own supplements for data older than
-Half-Life 1.1 (delta.lst from mkdelta.py, placeholder event scripts).
+Half-Life 1.1 (delta.lst from mkdelta.py, placeholder event scripts) and
+without the Steam release's resource/*_english.txt (our own English strings
+for the menu, resource/mainui_english.txt).
 Standard library only.
 """
 import argparse

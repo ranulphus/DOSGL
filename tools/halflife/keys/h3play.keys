@@ -1,0 +1,14 @@
+# Half-Life H3 exit (run.sh play): seconds after the PC boots, then the set 1
+# scancode (Loop A --keys; 0x1xx are E0 keys). The menu shows at about 40 s
+# and c0a0 goes active at about 130 s in 86Box (g450, 128 MB).
+45.0:0x31    # N: New game
+52.0:0x32    # M: Medium
+150.0:0x40   # F6: quick save (WON's default.cfg)
+165.0:0x41   # F7: quick load
+# the tram carries the player through the c0a0 -> c0a0a landmark by itself
+400.0:0x29   # ` console
+400.6:0x10   # q
+401.2:0x16   # u
+401.8:0x17   # i
+402.4:0x14   # t
+403.0:0x1c   # Enter
