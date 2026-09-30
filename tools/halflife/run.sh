@@ -7,13 +7,16 @@
 #          server   HLDGL -dedicated: skill.cfg, then MAP (default c1a0) for a
 #                   few frames, and quit
 #          map      the client, a local game on MAP (default c1a0) for FRAMES
-#                   (default 600) frames, then quit
+#                   (default 600) frames, then quit; WIDTH x HEIGHT (default
+#                   640x480), a fixed 1/50 s game step (host_framerate) so
+#                   the frames SNAP names (DGL_SNAP) are the same every run
 #          maps     HLDGL -dedicated, the console on COM1 (HL_SERIAL): MAPS
 #                   (default t0a0 c0a0 c1a0 c1a1) one after another, EVERY
 #                   (default 250) frames each, then quit (HL_AT)
 #   CARD   g450 (default), g400 or g200
 # The engine's console output is in out/NAME/files/HL.TXT (and VER.TXT).
-# Environment: MAP, SHOTS (screenshot seconds after boot), PRE (one more
+# Environment: MAP, MEM (the PC's RAM in MB, default 128), SHOTS (screenshot
+# seconds after boot), PRE (one more
 # RUN.BAT line), NAME (result directory out/NAME, default hl-MODE-CARD),
 # MGAHAL_DIR (another copy of the harness).
 # Needs build/halflife (tools/halflife/build.sh) and the fixture
@@ -33,7 +36,8 @@ name=${NAME:-hl-$mode-$card}
 common=(--games-file "$here/games.json" --game halflife --card "$card" --out "$root/out/$name"
         --pre "SET HL_SERIAL=1" --pre "SET HL_CRASHLOG=C:\\OUT\\CRASH.TXT"
         --file "$b/HLDGL.EXE=D:/HL/HLDGL.EXE" --file "$b/EXTRAS.PK3=D:/HL/VALVE/EXTRAS.PK3"
-        --file "$b/DOSLFN.COM=D:/HL/DOSLFN.COM" --timeout 1800 --idle 300)
+        --file "$b/DOSLFN.COM=D:/HL/DOSLFN.COM" --mem "${MEM:-128}" --timeout 1800 --idle 300)
+[ -n "${SNAP:-}" ] && common+=(--pre "SET DGL_SNAP=$SNAP")
 [ -n "${PRE:-}" ] && common+=(--pre "$PRE")
 [ -n "${SHOTS:-}" ] && common+=(--shots "$SHOTS")
 start=(--cmd "D:" --cmd "CD \\HL" --cmd "DOSLFN")
@@ -48,7 +52,7 @@ case $mode in
     args=${*:-"-dedicated -dev 2 -game valve +maxplayers 1 +exec skill.cfg +map ${MAP:-c1a0} +wait +wait +wait +wait +quit"}
     set -- "${common[@]}" "${start[@]}" --cmd "HLDGL.EXE $args > C:\\OUT\\HL.TXT" ;;
   map)
-    args=${*:-"-dev 1 -game valve +exec skill.cfg +map ${MAP:-c1a0}"}
+    args=${*:-"-game valve -width ${WIDTH:-640} -height ${HEIGHT:-480} +host_framerate 0.02 +exec skill.cfg +map ${MAP:-c1a0}"}
     set -- "${common[@]}" --pre "SET HL_AT=${FRAMES:-600} quit" "${start[@]}" --cmd "HLDGL.EXE $args > C:\\OUT\\HL.TXT" ;;
   maps)
     set -- ${MAPS:-t0a0 c0a0 c1a0 c1a1}
