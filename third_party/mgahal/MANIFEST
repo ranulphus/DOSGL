@@ -1,7 +1,7 @@
 b95fdd062dbe9bdb197937afed9e7bcb36bbe859714461ba491d2d5398061ba9  ./LICENSE
 b03c51f46524e603bfb8eec53c727b10152e8cca9659f47321c3cf73d46ccbc8  ./Makefile
-8032aecea2ccc885de2fb935c0346ce52380a9b242e02c56b5c0d1c29b21963c  ./README.md
-d15ef21902f81d62362959d40bcb659f97095aa553b3b1155aa3e263aa43a1ae  ./VERSION
+70eac4d03af326553324b74a8687db86cee67f46768fd682742e0ceaab8e9bc3  ./README.md
+6a665d25250dff5a3e095e844e9b12351bcbb8a309c0786ea77a8668e00d771a  ./VERSION
 347b558992b3cb92d605fbfcd2299d52f33b4ecc127301251d0a738ae455d8ad  ./docs/bench.md
 65af133b1b35bdafeb4a981d67ecf3110e77e64f80a959efc799c774256b80b7  ./docs/emulated-g200.md
 6348dbe1d0d27b8d60a9aebc225a2ece8b512a0ab67df1497020506bb788f51c  ./docs/emulated-g400.md
@@ -49,7 +49,7 @@ fb22e3f3c8fd640e082130ac158b18ee9363b6debeecced570744d2c82ede909  ./tests/unit/r
 5f257ee65689a457b39a921e3d8dde392cf5fd05df3f02557e624ad5d04131e4  ./tests/unit/unit.h
 055661ee31077c5312237f73a5909c434fcbdd30c816af90d0856a7c51ab8716  ./tools/86box/build.sh
 c597d29d9075ac8e2354c9d063aec0459223081aa86a15cb16f4f02d40c04aeb  ./tools/86box/mkwinkit.sh
-81b3b8fcf903ac0b4833b96f5afc8fed879d91defb1928cd1cc1361188cd33af  ./tools/86box/mkwinvm.py
+433101f5b792418fbfc80025d44901ce3f1b9c98cc459529168f2d50786711a2  ./tools/86box/mkwinvm.py
 907433d1b1557529e0e2fa1fd29fee91faabcbbefff10d96bc61e2d53cc3fc8c  ./tools/86box/patches/local/0001-mga-unsupported-state-warns.patch
 5ab32edcbaa46d9618ef9ac69e12f857f9b4573a56a5383d1a5931beb1164ae8  ./tools/86box/patches/local/0002-mga-bilinear-fixes.patch
 e6c1f897c394b508bcec0c5c63b14271142ddcf169ab81e265e69096759bae85  ./tools/86box/patches/local/0003-mga-16bpp-palette-index.patch
