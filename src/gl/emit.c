@@ -17,9 +17,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-int dgl_stage_word(int stage, GLenum env, const dgl_texture *t, const GLfloat *env_color, uint32_t *w);
+int dgl_stage_word(int stage, const dgl_texenv *e, const dgl_texture *t, uint32_t *w);
 int dgl_env_needs_combiner(GLenum env, const dgl_texture *t);
-int dgl_texture_units(void);
 
 static mga_tri_ctx tctx;
 static mga_texstate tstate, tstate1;  /* hardware maps 0 and 1 */
@@ -138,16 +137,21 @@ static void sampler(mga_texstate *ts, const dgl_texture *tex, float *scale_s, fl
                                       tex->min_filter == GL_LINEAR_MIPMAP_LINEAR);
 }
 
-/* A stage's combiner word; an environment the combiner cannot do in one
- * stage (GL_BLEND with a colour) is drawn as GL_MODULATE, logged once. */
-static uint32_t stage_word(int stage, GLenum env, const dgl_texture *t, const GLfloat *color)
+/* A stage's combiner word for a GL unit's environment; one the combiner
+ * cannot do in one stage (GL_BLEND with a colour, some GL_COMBINE_ARB
+ * functions, combine.c) is drawn as GL_MODULATE, logged once. */
+static uint32_t stage_word(int stage, int unit, const dgl_texture *t)
 {
     static int warned;
+    const dgl_texenv *e = dgl_tex_env(unit);
+    dgl_texenv modulate = *e;
     uint32_t w = 0;
-    if (!dgl_stage_word(stage, env, t, color, &w)) {
+    if (!dgl_stage_word(stage, e, t, &w)) {
         if (!warned++)
-            DGL_WARN("DGL-WARN env 0x%x with this colour is drawn as GL_MODULATE", (unsigned)env);
-        dgl_stage_word(stage, GL_MODULATE, t, color, &w);
+            DGL_WARN("DGL-WARN env 0x%x (combine 0x%x/0x%x) is drawn as GL_MODULATE", (unsigned)e->mode,
+                     (unsigned)e->combine_rgb, (unsigned)e->combine_alpha);
+        modulate.mode = GL_MODULATE;
+        dgl_stage_word(stage, &modulate, t, &w);
     }
     return w;
 }
@@ -211,10 +215,10 @@ static void validate(void)
             if (mga.has_dual_tex && (tex1 || force_combiner || dgl_env_needs_combiner(env, tex))) {
                 /* G400: the combiner does the environments (Mesa's words);
                  * the legacy modulate stays off. */
-                w0 = stage_word(0, env, tex, dgl_tex_env_color(unit0));
+                w0 = stage_word(0, unit0, tex);
                 if (tex1) {
                     sampler(&tstate1, tex1, &tex_scale_s1, &tex_scale_t1);
-                    w1 = stage_word(1, dgl_tex_env_mode(1), tex1, dgl_tex_env_color(1));
+                    w1 = stage_word(1, 1, tex1);
                     dual = 1;
                 } else if (w0 & (1u << 20)) {
                     /* The blend mode (GL_DECAL on alpha) needs dualtex: map 1

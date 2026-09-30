@@ -24,13 +24,24 @@ enum {
     DGL_DIRTY_FOG     = 1u << 4
 };
 
-/* Client-side array (glVertexPointer etc.). */
+/* A buffer object (GL_ARB_vertex_buffer_object, buffer.c): system memory. */
+typedef struct dgl_buffer {
+    GLuint name;
+    GLsizeiptrARB size;
+    void *data;
+    GLenum usage, access;
+    int mapped;
+} dgl_buffer;
+
+/* Client-side array (glVertexPointer etc.). With a buffer object (buf), ptr
+ * is an offset into it (dgl_buffer_address). */
 typedef struct {
     GLint size;
     GLenum type;
     GLsizei stride;
     const void *ptr;
     int enabled;
+    const dgl_buffer *buf;
 } dgl_array;
 
 /* A vertex after the modelview-projection transform: clip coordinates plus
@@ -111,6 +122,15 @@ typedef struct {
     unsigned long tris_in, clipped, zero_area, culled;
 } dgl_prim_counts;
 extern dgl_prim_counts dgl_prims;
+
+/* buffer.c */
+const dgl_buffer *dgl_array_buffer(void);                 /* bound to GL_ARRAY_BUFFER_ARB, or NULL */
+const dgl_buffer *dgl_element_buffer(void);               /* bound to GL_ELEMENT_ARRAY_BUFFER_ARB */
+const void *dgl_buffer_address(const dgl_buffer *b, const void *p);
+int dgl_buffer_query(GLenum p, double *v);                /* glGet* of the bindings */
+void dgl_buffers_reset(void);
+/* vertex.c: the arrays let go of a buffer being deleted */
+void dgl_arrays_forget_buffer(const dgl_buffer *b);
 
 /* matrix.c */
 void dgl_mat_identity(dgl_mat4 *r);

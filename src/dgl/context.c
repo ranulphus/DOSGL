@@ -243,6 +243,7 @@ int dglInit(const DGLConfig *cfg)
         stats_tris0 = setup_stats.tris;
     }
     dgl_gl_reset();
+    dgl_buffers_reset();                /* buffer objects (buffer.c) go with the old context */
     dgl_gl_error_hook = log_gl_error;
     dgl_gl_set_window(c.width, c.height);
     {

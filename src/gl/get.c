@@ -112,7 +112,7 @@ static int query(GLenum p, double *v)
     case GL_MAX_ATTRIB_STACK_DEPTH: case GL_MAX_CLIENT_ATTRIB_STACK_DEPTH: v[0] = 16; return 1;
     case GL_MAX_TEXTURE_UNITS_ARB: { extern int dgl_texture_units(void); v[0] = dgl_texture_units(); return 1; }
     case GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: v[0] = 1; return 1;
-    default: return 0;
+    default: return dgl_buffer_query(p, v);     /* buffer bindings, element limits (buffer.c) */
     }
     for (i = 0; i < 16; i++)
         v[i] = m->m[i];
@@ -167,16 +167,22 @@ void APIENTRY glGetBooleanv(GLenum p, GLboolean *out)
         out[i] = v[i] != 0.0;
 }
 
-/* Every name ends in a space, as programs that search for "NAME " expect. */
+/* Every name ends in a space, as programs that search for "NAME " expect.
+ * Buffer objects and draw_range_elements everywhere (buffer.c); multitexture
+ * and the combiner's subset of texture_env_combine where there are two
+ * texture units (combine.c). */
 static const char *extensions(void)
 {
     return mga.has_dual_tex ? "GL_EXT_bgra "
                               "GL_EXT_texture_edge_clamp GL_SGIS_texture_edge_clamp "
                               "GL_EXT_paletted_texture GL_EXT_shared_texture_palette "
+                              "GL_ARB_vertex_buffer_object GL_EXT_draw_range_elements "
                               "GL_ARB_multitexture GL_SGIS_multitexture "
+                              "GL_ARB_texture_env_combine GL_EXT_texture_env_combine "
                             : "GL_EXT_bgra "
                               "GL_EXT_texture_edge_clamp GL_SGIS_texture_edge_clamp "
-                              "GL_EXT_paletted_texture GL_EXT_shared_texture_palette ";
+                              "GL_EXT_paletted_texture GL_EXT_shared_texture_palette "
+                              "GL_ARB_vertex_buffer_object GL_EXT_draw_range_elements ";
 }
 
 const GLubyte *APIENTRY glGetString(GLenum name)

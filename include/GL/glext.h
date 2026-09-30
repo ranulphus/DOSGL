@@ -142,6 +142,65 @@
 #define GL_TEXTURE1_SGIS 0x835F
 #endif
 
+/* GL_ARB_vertex_buffer_object (every card: buffers in system memory) */
+#ifndef GL_ARB_vertex_buffer_object
+#define GL_ARB_vertex_buffer_object 1
+#include <stddef.h>
+typedef ptrdiff_t GLintptrARB;
+typedef ptrdiff_t GLsizeiptrARB;
+#define GL_BUFFER_SIZE_ARB                        0x8764
+#define GL_BUFFER_USAGE_ARB                       0x8765
+#define GL_ARRAY_BUFFER_ARB                       0x8892
+#define GL_ELEMENT_ARRAY_BUFFER_ARB               0x8893
+#define GL_ARRAY_BUFFER_BINDING_ARB               0x8894
+#define GL_ELEMENT_ARRAY_BUFFER_BINDING_ARB       0x8895
+#define GL_VERTEX_ARRAY_BUFFER_BINDING_ARB        0x8896
+#define GL_COLOR_ARRAY_BUFFER_BINDING_ARB         0x8898
+#define GL_TEXTURE_COORD_ARRAY_BUFFER_BINDING_ARB 0x889A
+#define GL_READ_ONLY_ARB                          0x88B8
+#define GL_WRITE_ONLY_ARB                         0x88B9
+#define GL_READ_WRITE_ARB                         0x88BA
+#define GL_BUFFER_ACCESS_ARB                      0x88BB
+#define GL_BUFFER_MAPPED_ARB                      0x88BC
+#define GL_BUFFER_MAP_POINTER_ARB                 0x88BD
+#define GL_STREAM_DRAW_ARB                        0x88E0
+#define GL_STATIC_DRAW_ARB                        0x88E4
+#define GL_DYNAMIC_DRAW_ARB                       0x88E8
+#endif
+
+/* GL_EXT_draw_range_elements (every card) */
+#ifndef GL_MAX_ELEMENTS_VERTICES_EXT
+#define GL_MAX_ELEMENTS_VERTICES_EXT 0x80E8
+#define GL_MAX_ELEMENTS_INDICES_EXT  0x80E9
+#endif
+
+/* GL_ARB_texture_env_combine (G400 and G450: the combinations their
+ * combiner stages can do, combine.c) */
+#ifndef GL_COMBINE_ARB
+#define GL_COMBINE_ARB        0x8570
+#define GL_COMBINE_RGB_ARB    0x8571
+#define GL_COMBINE_ALPHA_ARB  0x8572
+#define GL_RGB_SCALE_ARB      0x8573
+#define GL_ADD_SIGNED_ARB     0x8574
+#define GL_INTERPOLATE_ARB    0x8575
+#define GL_CONSTANT_ARB       0x8576
+#define GL_PRIMARY_COLOR_ARB  0x8577
+#define GL_PREVIOUS_ARB       0x8578
+#define GL_SUBTRACT_ARB       0x84E7
+#define GL_SOURCE0_RGB_ARB    0x8580
+#define GL_SOURCE1_RGB_ARB    0x8581
+#define GL_SOURCE2_RGB_ARB    0x8582
+#define GL_SOURCE0_ALPHA_ARB  0x8588
+#define GL_SOURCE1_ALPHA_ARB  0x8589
+#define GL_SOURCE2_ALPHA_ARB  0x858A
+#define GL_OPERAND0_RGB_ARB   0x8590
+#define GL_OPERAND1_RGB_ARB   0x8591
+#define GL_OPERAND2_RGB_ARB   0x8592
+#define GL_OPERAND0_ALPHA_ARB 0x8598
+#define GL_OPERAND1_ALPHA_ARB 0x8599
+#define GL_OPERAND2_ALPHA_ARB 0x859A
+#endif
+
 /* Entry points DOS-GL implements, reached through dglGetProcAddress or
  * declared here when GL_GLEXT_PROTOTYPES is defined (as with Mesa's glext.h;
  * programs that keep their own function pointers never see them). */
@@ -192,6 +251,21 @@ void APIENTRY glSelectTextureSGIS(GLenum target);
 void APIENTRY glSelectTextureCoordSetSGIS(GLenum target);
 void APIENTRY glMTexCoord2fSGIS(GLenum target, GLfloat s, GLfloat t);
 void APIENTRY glMTexCoord2fvSGIS(GLenum target, const GLfloat *v);
+/* GL_ARB_vertex_buffer_object */
+void APIENTRY glBindBufferARB(GLenum target, GLuint buffer);
+void APIENTRY glDeleteBuffersARB(GLsizei n, const GLuint *buffers);
+void APIENTRY glGenBuffersARB(GLsizei n, GLuint *buffers);
+GLboolean APIENTRY glIsBufferARB(GLuint buffer);
+void APIENTRY glBufferDataARB(GLenum target, GLsizeiptrARB size, const GLvoid *data, GLenum usage);
+void APIENTRY glBufferSubDataARB(GLenum target, GLintptrARB offset, GLsizeiptrARB size, const GLvoid *data);
+void APIENTRY glGetBufferSubDataARB(GLenum target, GLintptrARB offset, GLsizeiptrARB size, GLvoid *data);
+GLvoid *APIENTRY glMapBufferARB(GLenum target, GLenum access);
+GLboolean APIENTRY glUnmapBufferARB(GLenum target);
+void APIENTRY glGetBufferParameterivARB(GLenum target, GLenum pname, GLint *params);
+void APIENTRY glGetBufferPointervARB(GLenum target, GLenum pname, GLvoid **params);
+/* GL_EXT_draw_range_elements */
+void APIENTRY glDrawRangeElementsEXT(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type,
+                                     const GLvoid *indices);
 /* GL_EXT_paletted_texture */
 void APIENTRY glColorTableEXT(GLenum target, GLenum internalformat, GLsizei width, GLenum format, GLenum type,
                               const GLvoid *table);

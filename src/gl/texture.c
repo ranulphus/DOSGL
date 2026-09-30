@@ -41,16 +41,30 @@ static uint32_t lut_off;
 static int lut_ok;
 static const dgl_palette *lut_pal;
 static unsigned lut_gen;
-static GLenum env_mode_u[2] = { GL_MODULATE, GL_MODULATE };
-static GLfloat env_color_u[2][4];       /* GL_TEXTURE_ENV_COLOR */
-#define env_mode (env_mode_u[dgl_gl.active_unit])
-#define env_color (env_color_u[dgl_gl.active_unit])
+static dgl_texenv env_u[2];             /* per texture unit (env_defaults) */
+#define cur_env (env_u[dgl_gl.active_unit])
 
 uint32_t dgl_sync_epoch;
 dgl_tex_counts dgl_texc;
 
-GLenum dgl_tex_env_mode(int unit) { return env_mode_u[unit]; }
-const GLfloat *dgl_tex_env_color(int unit) { return env_color_u[unit]; }
+const dgl_texenv *dgl_tex_env(int unit) { return &env_u[unit]; }
+GLenum dgl_tex_env_mode(int unit) { return env_u[unit].mode; }
+const GLfloat *dgl_tex_env_color(int unit) { return env_u[unit].color; }
+
+/* GL's initial environment, with texture_env_combine's defaults. */
+static void env_defaults(dgl_texenv *e)
+{
+    memset(e, 0, sizeof *e);
+    e->mode = GL_MODULATE;
+    e->combine_rgb = e->combine_alpha = GL_MODULATE;
+    e->src_rgb[0] = e->src_alpha[0] = GL_TEXTURE;
+    e->src_rgb[1] = e->src_alpha[1] = GL_PREVIOUS_ARB;
+    e->src_rgb[2] = e->src_alpha[2] = GL_CONSTANT_ARB;
+    e->op_rgb[0] = e->op_rgb[1] = GL_SRC_COLOR;
+    e->op_rgb[2] = GL_SRC_ALPHA;
+    e->op_alpha[0] = e->op_alpha[1] = e->op_alpha[2] = GL_SRC_ALPHA;
+    e->rgb_scale = e->alpha_scale = 1.0f;
+}
 
 int dgl_sync(void)
 {
@@ -191,8 +205,8 @@ void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end)
         destroy(far_tex[nfar - 1]->name);
     bound_u[0] = bound_u[1] = 0;
     dgl_palettes_reset();
-    env_mode_u[0] = env_mode_u[1] = GL_MODULATE;
-    memset(env_color_u, 0, sizeof env_color_u);
+    env_defaults(&env_u[0]);
+    env_defaults(&env_u[1]);
     dgl_vram_init(heap_start, heap_end);
     white_ok = dgl_vram_alloc(8 * 8 * 2, &white_off) == 0;
     lut_ok = dgl_vram_alloc(256 * 2, &lut_off) == 0;
@@ -401,31 +415,96 @@ void APIENTRY glGetTexLevelParameterfv(GLenum target, GLint level, GLenum pname,
 }
 
 /* ---- Texture environment ------------------------------------------------- */
+/* texture_env_combine's enumerants, for validation. */
+static int one_of(GLenum x, const GLenum *set)
+{
+    for (; *set; set++)
+        if (*set == x)
+            return 1;
+    return 0;
+}
+static const GLenum combine_rgb_funcs[] = { GL_REPLACE, GL_MODULATE, GL_ADD, GL_ADD_SIGNED_ARB, GL_INTERPOLATE_ARB,
+                                            GL_SUBTRACT_ARB, 0 };
+static const GLenum combine_srcs[] = { GL_TEXTURE, GL_CONSTANT_ARB, GL_PRIMARY_COLOR_ARB, GL_PREVIOUS_ARB, 0 };
+static const GLenum rgb_operands[] = { GL_SRC_COLOR, GL_ONE_MINUS_SRC_COLOR, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, 0 };
+static const GLenum alpha_operands[] = { GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, 0 };
+
 static void env(GLenum target, GLenum pname, const GLfloat *v)
 {
-    GLint mode;
+    dgl_texenv *e = &cur_env;
+    GLenum x = (GLenum)(GLint)v[0];
     int i;
     if (target != GL_TEXTURE_ENV) { dgl_gl_error(GL_INVALID_ENUM); return; }
     switch (pname) {
     case GL_TEXTURE_ENV_MODE:
-        mode = (GLint)v[0];
         /* GL_BLEND is drawn by the G400's combiner (with a black environment
-         * colour; otherwise as GL_MODULATE, logged); GL_ADD is not GL 1.1. */
-        if (mode != GL_MODULATE && mode != GL_REPLACE && mode != GL_DECAL && mode != GL_BLEND) {
+         * colour; otherwise as GL_MODULATE, logged); GL_ADD (GL 1.3) and
+         * GL_COMBINE_ARB by the combiner (combine.c: what it cannot do is
+         * drawn as GL_MODULATE, logged) */
+        if ((x != GL_MODULATE && x != GL_REPLACE && x != GL_DECAL && x != GL_BLEND && x != GL_ADD &&
+             x != GL_COMBINE_ARB) ||
+            ((x == GL_ADD || x == GL_COMBINE_ARB) && dgl_texture_units() < 2)) {   /* no combiner */
             dgl_gl_error(GL_INVALID_ENUM);
             return;
         }
-        env_mode = (GLenum)mode;
+        e->mode = x;
         break;
     case GL_TEXTURE_ENV_COLOR:
         for (i = 0; i < 4; i++)
-            env_color[i] = v[i] < 0 ? 0 : v[i] > 1 ? 1 : v[i];
+            e->color[i] = v[i] < 0 ? 0 : v[i] > 1 ? 1 : v[i];
+        break;
+    case GL_COMBINE_RGB_ARB:
+    case GL_COMBINE_ALPHA_ARB:
+        if (!one_of(x, combine_rgb_funcs)) { dgl_gl_error(GL_INVALID_ENUM); return; }
+        *(pname == GL_COMBINE_RGB_ARB ? &e->combine_rgb : &e->combine_alpha) = x;
+        break;
+    case GL_SOURCE0_RGB_ARB: case GL_SOURCE1_RGB_ARB: case GL_SOURCE2_RGB_ARB:
+        if (!one_of(x, combine_srcs)) { dgl_gl_error(GL_INVALID_ENUM); return; }
+        e->src_rgb[pname - GL_SOURCE0_RGB_ARB] = x;
+        break;
+    case GL_SOURCE0_ALPHA_ARB: case GL_SOURCE1_ALPHA_ARB: case GL_SOURCE2_ALPHA_ARB:
+        if (!one_of(x, combine_srcs)) { dgl_gl_error(GL_INVALID_ENUM); return; }
+        e->src_alpha[pname - GL_SOURCE0_ALPHA_ARB] = x;
+        break;
+    case GL_OPERAND0_RGB_ARB: case GL_OPERAND1_RGB_ARB: case GL_OPERAND2_RGB_ARB:
+        if (!one_of(x, rgb_operands)) { dgl_gl_error(GL_INVALID_ENUM); return; }
+        e->op_rgb[pname - GL_OPERAND0_RGB_ARB] = x;
+        break;
+    case GL_OPERAND0_ALPHA_ARB: case GL_OPERAND1_ALPHA_ARB: case GL_OPERAND2_ALPHA_ARB:
+        if (!one_of(x, alpha_operands)) { dgl_gl_error(GL_INVALID_ENUM); return; }
+        e->op_alpha[pname - GL_OPERAND0_ALPHA_ARB] = x;
+        break;
+    case GL_RGB_SCALE_ARB:
+    case GL_ALPHA_SCALE:
+        if (v[0] != 1.0f && v[0] != 2.0f && v[0] != 4.0f) { dgl_gl_error(GL_INVALID_VALUE); return; }
+        *(pname == GL_RGB_SCALE_ARB ? &e->rgb_scale : &e->alpha_scale) = v[0];
         break;
     default:
         dgl_gl_error(GL_INVALID_ENUM);
         return;
     }
     dgl_gl.dirty |= DGL_DIRTY_TEXTURE | DGL_DIRTY_RASTER;
+}
+
+/* One value of glGetTexEnv (colour aside); 0 for an unknown name. */
+static int env_value(const dgl_texenv *e, GLenum pname, GLfloat *v)
+{
+    switch (pname) {
+    case GL_TEXTURE_ENV_MODE: *v = (GLfloat)e->mode; return 1;
+    case GL_COMBINE_RGB_ARB: *v = (GLfloat)e->combine_rgb; return 1;
+    case GL_COMBINE_ALPHA_ARB: *v = (GLfloat)e->combine_alpha; return 1;
+    case GL_SOURCE0_RGB_ARB: case GL_SOURCE1_RGB_ARB: case GL_SOURCE2_RGB_ARB:
+        *v = (GLfloat)e->src_rgb[pname - GL_SOURCE0_RGB_ARB]; return 1;
+    case GL_SOURCE0_ALPHA_ARB: case GL_SOURCE1_ALPHA_ARB: case GL_SOURCE2_ALPHA_ARB:
+        *v = (GLfloat)e->src_alpha[pname - GL_SOURCE0_ALPHA_ARB]; return 1;
+    case GL_OPERAND0_RGB_ARB: case GL_OPERAND1_RGB_ARB: case GL_OPERAND2_RGB_ARB:
+        *v = (GLfloat)e->op_rgb[pname - GL_OPERAND0_RGB_ARB]; return 1;
+    case GL_OPERAND0_ALPHA_ARB: case GL_OPERAND1_ALPHA_ARB: case GL_OPERAND2_ALPHA_ARB:
+        *v = (GLfloat)e->op_alpha[pname - GL_OPERAND0_ALPHA_ARB]; return 1;
+    case GL_RGB_SCALE_ARB: *v = e->rgb_scale; return 1;
+    case GL_ALPHA_SCALE: *v = e->alpha_scale; return 1;
+    default: return 0;
+    }
 }
 
 void APIENTRY glTexEnvi(GLenum target, GLenum pname, GLint p)
@@ -459,17 +538,17 @@ void APIENTRY glGetTexEnvfv(GLenum target, GLenum pname, GLfloat *v)
 {
     int i;
     if (target != GL_TEXTURE_ENV) { dgl_gl_error(GL_INVALID_ENUM); return; }
-    if (pname == GL_TEXTURE_ENV_MODE) v[0] = (GLfloat)env_mode;
-    else if (pname == GL_TEXTURE_ENV_COLOR) for (i = 0; i < 4; i++) v[i] = env_color[i];
-    else dgl_gl_error(GL_INVALID_ENUM);
+    if (pname == GL_TEXTURE_ENV_COLOR) for (i = 0; i < 4; i++) v[i] = cur_env.color[i];
+    else if (!env_value(&cur_env, pname, v)) dgl_gl_error(GL_INVALID_ENUM);
 }
 
 void APIENTRY glGetTexEnviv(GLenum target, GLenum pname, GLint *v)
 {
     int i;
+    GLfloat f;
     if (target != GL_TEXTURE_ENV) { dgl_gl_error(GL_INVALID_ENUM); return; }
-    if (pname == GL_TEXTURE_ENV_MODE) v[0] = (GLint)env_mode;
-    else if (pname == GL_TEXTURE_ENV_COLOR) for (i = 0; i < 4; i++) v[i] = (GLint)(env_color[i] * 2147483647.0);
+    if (pname == GL_TEXTURE_ENV_COLOR) for (i = 0; i < 4; i++) v[i] = (GLint)(cur_env.color[i] * 2147483647.0);
+    else if (env_value(&cur_env, pname, &f)) v[0] = (GLint)f;
     else dgl_gl_error(GL_INVALID_ENUM);
 }
 

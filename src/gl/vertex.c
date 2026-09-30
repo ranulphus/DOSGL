@@ -20,7 +20,19 @@ static int set_array(dgl_array *a, GLint size, GLenum type, GLsizei stride, cons
         ;
     if (!types[i]) { dgl_gl_error(GL_INVALID_ENUM); return 0; }
     a->size = size; a->type = type; a->stride = stride; a->ptr = p;
+    a->buf = dgl_array_buffer();            /* p is an offset into it, if any (buffer.c) */
     return 1;
+}
+
+void dgl_arrays_forget_buffer(const dgl_buffer *b)
+{
+    dgl_array *a[4] = { &dgl_gl.va, &dgl_gl.ca, &dgl_gl.ta, &dgl_gl.ta1 };
+    int i;
+    for (i = 0; i < 4; i++)
+        if (a[i]->buf == b) {
+            a[i]->buf = NULL;
+            a[i]->ptr = NULL;
+        }
 }
 
 static const GLenum pos_types[] = { GL_FLOAT, GL_DOUBLE, GL_SHORT, GL_INT, 0 };
@@ -70,7 +82,7 @@ static int type_size(GLenum t)
 
 static void read_comps(const dgl_array *a, GLint i, float *out, int n, int normalise)
 {
-    const unsigned char *p = (const unsigned char *)a->ptr +
+    const unsigned char *p = (const unsigned char *)dgl_buffer_address(a->buf, a->ptr) +
                              (size_t)i * (a->stride ? (size_t)a->stride : (size_t)(a->size * type_size(a->type)));
     int k;
     for (k = 0; k < n && k < a->size; k++) {
@@ -285,6 +297,7 @@ void APIENTRY glDrawElements(GLenum mode, GLsizei count, GLenum type, const GLvo
     }
     if (!dgl_gl.va.enabled || !count)
         return;
+    indices = dgl_buffer_address(dgl_element_buffer(), indices);   /* an offset with a buffer bound */
     if (count > cap) {
         GLint *n = (GLint *)realloc(buf, (size_t)count * sizeof *n);
         if (!n) { dgl_gl_error(GL_OUT_OF_MEMORY); return; }

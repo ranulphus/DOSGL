@@ -92,6 +92,17 @@ typedef struct {
 extern dgl_tex_counts dgl_texc;
 
 dgl_texture *dgl_unit_texture(int unit);        /* a unit's bound texture; NULL when none or incomplete */
+/* A texture unit's environment (glTexEnv): the mode, its colour, and
+ * GL_ARB_texture_env_combine's parameters for mode GL_COMBINE_ARB. */
+typedef struct {
+    GLenum  mode;
+    GLfloat color[4];
+    GLenum  combine_rgb, combine_alpha;
+    GLenum  src_rgb[3], src_alpha[3], op_rgb[3], op_alpha[3];
+    GLfloat rgb_scale, alpha_scale;
+} dgl_texenv;
+const dgl_texenv *dgl_tex_env(int unit);
+int dgl_texture_units(void);                    /* ext.c: 2 with the G400's combiner, else 1 */
 GLenum dgl_tex_env_mode(int unit);
 const GLfloat *dgl_tex_env_color(int unit);
 dgl_palette *dgl_bound_palette(void);           /* the bound texture's own table (created) */
