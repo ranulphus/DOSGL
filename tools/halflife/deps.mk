@@ -4,6 +4,6 @@
 # lines. Their submodules come at the commits the forks' gitlinks pin, with
 # the forks' patch series (scripts/djgpp/patches) applied.
 XASH_URL     := https://github.com/ranulphus/xash3d-fwgs-dos
-XASH_COMMIT  := 6ced6d4d41b0cda1c3b92b0fc4c71e3e64ec7aeb
+XASH_COMMIT  := 8548a12aaecd896fd42d86796b9ee269ae3fed3a
 HLSDK_URL    := https://github.com/ranulphus/hlsdk-portable-dos
 HLSDK_COMMIT := 79298b3e6a39444c800a99f0090bbec8296147fc

@@ -17,6 +17,9 @@
 #          keys     the client with KEYS typed into it (Loop A --keys:
 #                   SECONDS:SCANCODE[:down|up],...), quitting after FRAMES
 #                   (default 100000; menu frames are cheap) frames if nothing ends it sooner
+#          record   DEMO.cfg (tools/halflife/demos) records DEMO.dem on MAP
+#                   (default c1a1) into the local fixture directory
+#          timedemo DEMO as a timedemo (TEST=ID: as DOSBench test ID)
 #          maps     HLDGL -dedicated, the console on COM1 (HL_SERIAL): MAPS
 #                   (default t0a0 c0a0 c1a0 c1a1) one after another, EVERY
 #                   (default 250) frames each, then quit (HL_AT)
@@ -54,6 +57,7 @@ common+=(--mouse "${MOUSE:-ps2}")
 [ -n "${PRE:-}" ] && common+=(--pre "$PRE")
 [ -n "${SHOTS:-}" ] && common+=(--shots "$SHOTS")
 start=(--cmd "D:" --cmd "CD \\HL" --cmd "DOSLFN")
+demos=${MGA_CACHE:-$HOME/.cache/mga-glide}/fixtures/games/hldemos   # recorded benchmark demos (local)
 case $mode in
   boot)
     args=${*:-"-dev 2 -game valve"}
@@ -75,6 +79,24 @@ case $mode in
     args=${*:-"-game valve +exec skill.cfg"}
     set -- "${common[@]}" --pre "SET HL_AT=${FRAMES:-100000} quit" --keys "${KEYS:?KEYS=SECONDS:SCANCODE,...}" \
       "${start[@]}" --cmd "HLDGL.EXE $args > C:\\OUT\\HL.TXT" --cmd "COPY VALVE\\CONFIG.CFG C:\\OUT > NUL" ;;
+  record)
+    # DEMO (default hlbench1): tools/halflife/demos/DEMO.cfg drives MAP
+    # (default c1a1) at a fixed 20 ms step and records DEMO.dem, which comes
+    # back to the local fixture directory $demos (never committed)
+    demo=${DEMO:-hlbench1}; up=$(echo "$demo" | tr a-z A-Z)
+    [ -f "$here/demos/$demo.cfg" ] || { echo "run.sh: no $here/demos/$demo.cfg" >&2; exit 2; }
+    args=${*:-"-game valve -width ${WIDTH:-640} -height ${HEIGHT:-480} +host_framerate 0.02 +exec skill.cfg +set td_script $demo.cfg +map ${MAP:-c1a1}"}
+    set -- "${common[@]}" --file "$here/demos/$demo.cfg=D:/HL/VALVE/$up.CFG" --pre "SET HL_AT=${FRAMES:-100000} quit" \
+      "${start[@]}" --cmd "HLDGL.EXE $args > C:\\OUT\\HL.TXT" --cmd "COPY VALVE\\$up.DEM C:\\OUT > NUL" ;;
+  timedemo)
+    # DEMO (default hlbench1) from $demos as a timedemo at the same fixed
+    # step and random seed as every run; TEST=ID also writes it as DOSBench
+    # test ID (RESULTS.TXT, frame 200 as L<ID>.PPM)
+    demo=${DEMO:-hlbench1}; up=$(echo "$demo" | tr a-z A-Z)
+    [ -f "$demos/$up.DEM" ] || { echo "run.sh: no $demos/$up.DEM (run.sh record)" >&2; exit 2; }
+    args=${*:-"-game valve -width ${WIDTH:-640} -height ${HEIGHT:-480} +host_framerate 0.02 +gl_vsync 0 +set td_seed 1 +set td_quit 1 ${TEST:++set td_dbtest $TEST }+timedemo $demo"}
+    set -- "${common[@]}" --file "$demos/$up.DEM=D:/HL/VALVE/$up.DEM" --pre "SET HL_AT=${FRAMES:-100000} quit" \
+      "${start[@]}" --cmd "HLDGL.EXE $args > C:\\OUT\\HL.TXT" ;;
   maps)
     set -- ${MAPS:-t0a0 c0a0 c1a0 c1a1}
     first=$1; shift
@@ -103,6 +125,17 @@ if [ "$mode" = play ] && [ "${PLAY:-h3play}" = h3play ]; then
   peak=$(grep -oE "heap_peak_kb=[0-9]+" <<<"$log" | tail -1 | cut -d= -f2 || true)
   if [ -n "$peak" ] && [ "$peak" -lt $(( ${MEM:-128} * 1024 )) ]; then echo "play: ok   heap peak ${peak} KB"; else echo "play: FAIL heap peak ${peak:-?} KB"; rc=1; fi
   if find "$root/out/$name/files" -iname CONFIG.CFG | grep -q .; then echo "play: ok   config.cfg written"; else echo "play: FAIL config.cfg"; rc=1; fi
+fi
+if [ "$mode" = record ]; then
+  got=$(find "$root/out/$name/files" -iname "$demo.dem" 2>/dev/null | head -1)
+  if [ -n "$got" ]; then
+    mkdir -p "$demos"; cp "$got" "$demos/$up.DEM"; echo "record: $demos/$up.DEM ($(stat -c %s "$got") bytes)"
+  else echo "record: no $demo.dem came back"; rc=1; fi
+fi
+if [ "$mode" = timedemo ]; then
+  grep -a "timedemo result" "$root/out/$name/serial.log" | sed 's/^HL-LOG /timedemo: /' || { echo "timedemo: no result"; rc=1; }
+  r=$(find "$root/out/$name/files" -iname RESULTS.TXT 2>/dev/null | head -1)
+  [ -n "$r" ] && grep "^T " "$r" | tr ' ' '\n' | grep -E "^(test|frames|fps|avg_ms|p99_ms|crc|notes|map)=" | paste -sd' ' -
 fi
 for f in VER.TXT HL.TXT; do
   p=$(find "$root/out/$name/files" -iname "$f" 2>/dev/null | head -1)
