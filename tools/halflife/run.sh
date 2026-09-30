@@ -6,6 +6,8 @@
 #   MODE   boot     HLDGL -version, then a client start with the game
 #          server   HLDGL -dedicated: skill.cfg, then MAP (default c1a0) for a
 #                   few frames, and quit
+#          map      the client, a local game on MAP (default c1a0) for FRAMES
+#                   (default 600) frames, then quit
 #          maps     HLDGL -dedicated, the console on COM1 (HL_SERIAL): MAPS
 #                   (default t0a0 c0a0 c1a0 c1a1) one after another, EVERY
 #                   (default 250) frames each, then quit (HL_AT)
@@ -45,6 +47,9 @@ case $mode in
     # game's own exec of it runs
     args=${*:-"-dedicated -dev 2 -game valve +maxplayers 1 +exec skill.cfg +map ${MAP:-c1a0} +wait +wait +wait +wait +quit"}
     set -- "${common[@]}" "${start[@]}" --cmd "HLDGL.EXE $args > C:\\OUT\\HL.TXT" ;;
+  map)
+    args=${*:-"-dev 1 -game valve +exec skill.cfg +map ${MAP:-c1a0}"}
+    set -- "${common[@]}" --pre "SET HL_AT=${FRAMES:-600} quit" "${start[@]}" --cmd "HLDGL.EXE $args > C:\\OUT\\HL.TXT" ;;
   maps)
     set -- ${MAPS:-t0a0 c0a0 c1a0 c1a1}
     first=$1; shift
