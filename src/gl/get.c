@@ -193,7 +193,7 @@ const GLubyte *APIENTRY glGetString(GLenum name)
     case GL_RENDERER:
         snprintf(renderer, sizeof renderer, "DOS-GL on %s", mga.name ? mga.name : "Matrox");
         return (const GLubyte *)renderer;
-    case GL_VERSION: return (const GLubyte *)"1.1 DOS-GL 0.2";
+    case GL_VERSION: return (const GLubyte *)"1.1 DOS-GL 0.3";
     case GL_EXTENSIONS: return (const GLubyte *)extensions();
     default: dgl_gl_error(GL_INVALID_ENUM); return (const GLubyte *)"";
     }
