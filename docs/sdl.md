@@ -65,10 +65,13 @@ SDL_DestroyWindow(w);
 ## Threads, events and audio
 
 SDL on DOS switches threads only when the running one yields: at
-`SDL_PumpEvents`/`SDL_PollEvent`, `SDL_Delay`, a contended mutex or
-semaphore, and the audio thread's own wait. The Sound Blaster driver's ring
-holds about 45 ms, and only the audio thread refills it, so a game must not
-go 45 ms without a yield:
+`SDL_PumpEvents`/`SDL_PollEvent` (with video initialised), `SDL_Delay`
+(`SDL_Delay(0)` too), a contended mutex or semaphore, and the audio thread's
+own wait. The Sound Blaster driver's ring holds four of the device's chunks
+(4096 bytes each at 44.1 kHz stereo: about 90 ms), and only the audio thread
+refills it. With patch 0006 it fills the whole ring in each of its turns
+(stock SDL mixed one chunk, 23 ms, per turn), so a game must not go about
+90 ms without a yield:
 
 - pump events at the start of each frame, and again inside long stretches
   of work (every 10 ms or so: `SDL_PumpEvents` only queues events);
@@ -77,8 +80,11 @@ go 45 ms without a yield:
   (`dglSetWaitHook`: about once a millisecond, and once before the retrace
   wait; `DGL-STAT hooks=`).
 
-A frame of 30 ms of work with a pump at its start and the swap's yields
-keeps the ring full; a 60 ms frame with no pump in it does not.
+A frame of 37 ms of work with one yield in it keeps the ring full (the
+`busy` test); stock SDL underran a third of its chunks there. The driver
+counts underruns: with the audio log category at debug priority
+(`SDL_SetLogPriority(SDL_LOG_CATEGORY_AUDIO, SDL_LOG_PRIORITY_DEBUG)`), closing
+the device logs `SoundBlaster: U of N chunks underran`.
 
 ## Leaving the machine usable
 
@@ -97,6 +103,8 @@ chains to SDL's.
 | `0002-dos-tls-init-once` | `SDL_SetTLS` cleared every thread's storage each call on DOS (so `SDL_GL_GetCurrentWindow` lost the window and every GL swap failed); thread 16 had none | bug fix |
 | `0003-dos-cleanup-on-exit-and-crash` | stop the Sound Blaster and unhook IRQ 1 on `exit()` and fatal signals | bug fix |
 | `0004-dos-joystick-four-axes` | read the gameport's third and fourth axes when present (4-axis sticks, wheels with pedals); calibrate around the rest position (the first move to an end was lost and set the centre there) | bug fix + feature |
+| `0005-dos-audio-count-underruns` | the Sound Blaster IRQ handler counts the chunks it had to play as silence; logged (audio category, debug) when the device closes | diagnostics |
+| `0006-dos-audio-fill-the-ring-before-yielding` | the audio thread yielded on every wait, so it mixed one chunk per turn and a game yielding once per 37 ms frame underran; it now fills the ring and yields when full, or after 10 ms without a yield (slow mixing must not starve the main thread) | bug fix |
 
 `tools/sdl/build.sh` applies them to a copy of the pinned source; the
 submodule itself stays untouched. To move the pin: update the submodule,
@@ -110,7 +118,8 @@ rebuild, run `make loopa-sdl` on g200, g400 and g450.
 |---|---|
 | `info` | SDL starts with video, audio and joystick; modes listed |
 | `keys` | keys typed in 86Box arrive through SDL; afterwards KEYWAIT reads one through the BIOS and VECCHK finds the interrupt vectors unchanged |
-| `beep` | a tone through SDL's SB16 driver is in the recording (`--wav`) |
+| `beep` | a tone through SDL's SB16 driver is in the recording (`--wav`); no chunk underran |
+| `busy` | the same with the main thread yielding once every 37 ms (`SDLBEEP --busy 37`): no chunk underran (a WAV gap cannot show it: 86Box does not keep pace with the recorder) |
 | `gl` | SDLGL's last frame equals TEXCUBE's (the same scene, DOS-GL directly), with SDL audio playing; the wait hook ran |
 | `modes` | an OpenGL window, context, frames and snapshot in every mode SDL lists, destroyed and recreated in one run |
 | `crash` | after a #UD with SDL's keyboard hooked and its SB playing: text mode, SBCHK finds the DMA stopped, VECCHK and KEYWAIT pass |

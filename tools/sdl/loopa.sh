@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # SDL3 on DOS-GL in Loop A on one card (default g450): each check's outcome on
 # one line, exit status 0 when all pass (docs/sdl.md, "Tests").
-#   tools/sdl/loopa.sh [CARD] [CHECK...]     checks: info keys beep gl modes crash exit joy
+#   tools/sdl/loopa.sh [CARD] [CHECK...]     checks: info keys beep busy gl modes crash exit joy
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 card=${1:-g450}; shift || true
-checks=${*:-info keys beep gl modes crash exit joy}
+checks=${*:-info keys beep busy gl modes crash exit joy}
 harness=${MGAHAL_DIR:-$root/third_party/mgahal}
 out=$root/out/sdl-$card
 mkdir -p "$out"
@@ -41,6 +41,16 @@ beep)
   st=$(run beep --exe "$root/build/exe/SDLBEEP.EXE" --sound sb16 --pre "$blaster" --wav)
   w=$(python3 "$harness/tools/loopa/wavcheck.py" "$out/beep/audio.wav" --tone 440 2>&1 | tail -1)
   if [ "$st" = PASS ] && [[ $w == *found* ]]; then say beep "PASS (440 Hz recorded)"; else bad beep "$st" "$w"; fi;;
+busy)
+  # The main thread yields once every 37 ms (a game's frame): the audio thread
+  # must fill the ring in its turns. The driver counts the chunks the card had
+  # to play as silence (SDL patch 0005); a WAV gap cannot tell, since 86Box
+  # does not keep pace with the recorder.
+  st=$(run busy --exe "$root/build/exe/SDLBEEP.EXE" --args="--busy 37" --sound sb16 --pre "$blaster" --wav)
+  w=$(python3 "$harness/tools/loopa/wavcheck.py" "$out/busy/audio.wav" --tone 440 2>&1 | tail -1)
+  u=$(log busy | grep -o 'HX-TEST underruns [A-Z]* .*' | cut -d' ' -f4-)
+  if [ "$st" = PASS ] && [[ $w == *found* ]]; then say busy "PASS ($u; 440 Hz recorded)"
+  else bad busy "$st" "$u; $w"; fi;;
 gl)
   # SDLGL draws TEXCUBE's scene through SDL (audio playing): the same last frame.
   run texcube --exe "$root/build/exe/TEXCUBE.EXE" --args="--frames 150" > /dev/null
