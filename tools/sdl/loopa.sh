@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # SDL3 on DOS-GL in Loop A on one card (default g450): each check's outcome on
 # one line, exit status 0 when all pass (docs/sdl.md, "Tests").
-#   tools/sdl/loopa.sh [CARD] [CHECK...]     checks: info keys beep busy gl modes crash exit joy
+#   tools/sdl/loopa.sh [CARD] [CHECK...]     checks: info keys beep busy badirq gl modes crash exit joy
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 card=${1:-g450}; shift || true
-checks=${*:-info keys beep busy gl modes crash exit joy}
+checks=${*:-info keys beep busy badirq gl modes crash exit joy}
 harness=${MGAHAL_DIR:-$root/third_party/mgahal}
 out=$root/out/sdl-$card
 mkdir -p "$out"
@@ -51,6 +51,14 @@ busy)
   u=$(log busy | grep -o 'HX-TEST underruns [A-Z]* .*' | cut -d' ' -f4-)
   if [ "$st" = PASS ] && [[ $w == *found* ]]; then say busy "PASS ($u; 440 Hz recorded)"
   else bad busy "$st" "$u; $w"; fi;;
+badirq)
+  # BLASTER names the wrong IRQ (the SB16 is on 5): the card never asks for
+  # audio. SDL must give the device up (patch 0007) and the program end,
+  # not hang closing it.
+  st=$(run badirq --exe "$root/build/exe/SDLBEEP.EXE" --sound sb16 --pre "SET BLASTER=A220 I7 D1 H5 T6")
+  g=$(log badirq | grep -o 'Giving it up' | head -1)
+  if [ "$st" = PASS ] && [ -n "$g" ]; then say badirq "PASS (the device given up; the program ended)"
+  else bad badirq "$st" "$(log badirq | grep -h 'HX-TEST .* FAIL\|SoundBlaster' | tr '\n' ' ')"; fi;;
 gl)
   # SDLGL draws TEXCUBE's scene through SDL (audio playing): the same last frame.
   run texcube --exe "$root/build/exe/TEXCUBE.EXE" --args="--frames 150" > /dev/null

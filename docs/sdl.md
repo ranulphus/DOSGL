@@ -105,6 +105,7 @@ chains to SDL's.
 | `0004-dos-joystick-four-axes` | read the gameport's third and fourth axes when present (4-axis sticks, wheels with pedals); calibrate around the rest position (the first move to an end was lost and set the centre there) | bug fix + feature |
 | `0005-dos-audio-count-underruns` | the Sound Blaster IRQ handler counts the chunks it had to play as silence; logged (audio category, debug) when the device closes | diagnostics |
 | `0006-dos-audio-fill-the-ring-before-yielding` | the audio thread yielded on every wait, so it mixed one chunk per turn and a game yielding once per 37 ms frame underran; it now fills the ring and yields when full, or after 10 ms without a yield (slow mixing must not starve the main thread) | bug fix |
+| `0007-dos-audio-give-up-a-silent-card` | with BLASTER naming the wrong IRQ the card never asks for audio, the ring stays full and the program hung closing the device; once a full ring has not drained for a second, the driver logs why (an error: is the card on IRQ n?) and gives the device up, and the program carries on silent | bug fix |
 
 `tools/sdl/build.sh` applies them to a copy of the pinned source; the
 submodule itself stays untouched. To move the pin: update the submodule,
@@ -120,6 +121,7 @@ rebuild, run `make loopa-sdl` on g200, g400 and g450.
 | `keys` | keys typed in 86Box arrive through SDL; afterwards KEYWAIT reads one through the BIOS and VECCHK finds the interrupt vectors unchanged |
 | `beep` | a tone through SDL's SB16 driver is in the recording (`--wav`); no chunk underran |
 | `busy` | the same with the main thread yielding once every 37 ms (`SDLBEEP --busy 37`): no chunk underran (a WAV gap cannot show it: 86Box does not keep pace with the recorder) |
+| `badirq` | `SDLBEEP` with BLASTER naming IRQ 7 for the SB16 on 5: the driver gives the device up and the program ends |
 | `gl` | SDLGL's last frame equals TEXCUBE's (the same scene, DOS-GL directly), with SDL audio playing; the wait hook ran |
 | `modes` | an OpenGL window, context, frames and snapshot in every mode SDL lists, destroyed and recreated in one run |
 | `crash` | after a #UD with SDL's keyboard hooked and its SB playing: text mode, SBCHK finds the DMA stopped, VECCHK and KEYWAIT pass |
