@@ -5,6 +5,7 @@
 #   make loopa TEST=hello [CARD=g450] [ARGS=--fail]    run an example in 86Box
 #   make quake / loopa-quake GAME=quake2   the Quake ports (tools/quake)
 #   make halflife / loopa-halflife MODE=play   Half-Life on Xash3D FWGS (tools/halflife)
+#   make doom / loopa-doom MODE=timedemo   PrBoom-plus on SDL3 and DOS-GL (tools/doom)
 #   make sdl / sdl-examples / loopa-sdl   SDL3 on DOS with DOS-GL (tools/sdl, docs/sdl.md)
 #   make sync-hal         refresh third_party/mgahal from MGA-Glide
 #   make check-hal        verify the vendored copy against its MANIFEST
@@ -29,7 +30,7 @@ HAL_SRCS := $(addprefix $(MGAHAL)/hal/,src/debug/serial.c src/pci.c src/chip.c s
 DGL_SRCS := $(wildcard src/dgl/*.c) $(wildcard src/gl/*.c)
 LIB := build/lib/libGL.a
 
-.PHONY: all lib examples sdl sdl-host sdl-examples loopa-sdl tests-host loopa conform conform-dos conform-host classicube loopa-classicube quake loopa-quake halflife loopa-halflife setup-djgpp setup-ow dostools 86box sync-hal check-hal clean help
+.PHONY: all lib examples sdl sdl-host sdl-examples loopa-sdl tests-host loopa conform conform-dos conform-host classicube loopa-classicube quake loopa-quake halflife loopa-halflife doom loopa-doom setup-djgpp setup-ow dostools 86box sync-hal check-hal clean help
 all: lib examples
 
 build/djgpp/%.o: %.c
@@ -153,6 +154,15 @@ halflife: lib
 	tools/halflife/build.sh
 loopa-halflife: halflife dostools
 	tools/halflife/run.sh $(MODE) $(CARD)
+
+# PrBoom-plus (tools/doom): the pinned fork (a local repository, ~/prboom-plus-dos)
+# built on SDL3 (build/sdl/dos) and libGL.a, run in 86Box on the owner's IWADs
+# (tools/doom/fixtures.py; never committed).
+#   make loopa-doom MODE=nodraw|timedemo|play|keys|cmd [CARD=g450]
+doom: lib sdl
+	tools/doom/build.sh
+loopa-doom: doom dostools
+	tools/doom/run.sh $(MODE) $(CARD)
 
 # Host unit tests.
 HOST_CFLAGS := -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude
