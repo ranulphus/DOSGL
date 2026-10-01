@@ -59,6 +59,20 @@ dglShutdown();
     engine, through the engine (ILOAD), or as
     whole re-uploads, renames, evictions, syncs forced by texture memory,
     palettes loaded into the lookup table).
+  - Profiling: a library built with `make PROF=1` (stage timers; needs a
+    Pentium) adds, with `DGL_STATS=2`, a `DGL-PROF` line a second: the
+    cycles each stage took, in units of 1024 (the program itself `app`,
+    `xform`, `valid`, `clip`, `proj`, `setup`, the HAL's setup stages
+    `splane`/`sinc`/`strap`, `fifo` waits, `tex` uploads, `clear`, and the
+    swap's `drain`, `vsync` and the rest), then triangles set up, register
+    writes, FIFOSTATUS reads, stage switches and what one switch costs.
+    `DGL_STATS=3` also logs `DGL-MICRO` at start (single operations'
+    cycles). The HAL's `tools/perf/profsum.py` sums a run's lines into each
+    stage's share and cycles per triangle. In 86Box the cycles are the
+    emulated CPU's: compare builds with each other, never with hardware,
+    and read FIFOSTATUS counts there as waits (its queue is 64K entries
+    deep, so the CPU polls only once the engine is far behind). Building
+    again without `PROF=1` returns to the library without timers.
   - `DGL_VSYNC=0` or `1` overrides the program's choice of swap on retrace.
   - `DGL_TEXHEAP_KB=n` caps the texture heap (to test eviction, or to
     behave like a card with less memory).
