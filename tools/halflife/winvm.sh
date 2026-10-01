@@ -27,7 +27,9 @@ cat > "$stage/notes.txt" <<'NOTES'
 What is on D: (D:\ is on PATH)
   HL.BAT        Type HL to play Half-Life (your WON copy, D:\HL\VALVE) in
                 Xash3D FWGS on DOS-GL, on the Matrox card. Options go to the
-                game: -width 800 -height 600 (or 320x240 ... 1280x1024), -nosound.
+                game: -width 800 -height 600 (or 320x240 ... 1280x1024), -nosound, and on
+                the G400/G450 +gl_vbo 1 (lightmaps in one pass: faster in open
+                areas, about even in fights).
   D:\HL         HLDGL.EXE (the engine, the game code and DOS-GL in one DJGPP
                 program), DOSLFN.COM (long file names; HL.BAT loads it).
 
