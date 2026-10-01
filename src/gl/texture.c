@@ -620,6 +620,7 @@ void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat, GLs
     dgl_texture *t;
     dgl_level *L;
     int max = mga.max_tex_size ? mga.max_tex_size : 1024, ifc = dgl_ifmt_class(internalformat);
+    PROF_SCOPE(PROF_D_TEX);
     if (!check_upload(target, level, format, type))
         return;
     if (ifc < 0 || border != 0 || !is_pow2(w) || !is_pow2(h) || w > max || h > max) {
@@ -760,6 +761,7 @@ void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsi
 {
     dgl_texture *t;
     dgl_level *L;
+    PROF_SCOPE(PROF_D_TEX);
     if (!check_upload(target, level, format, type))
         return;
     t = get(bound, 0);

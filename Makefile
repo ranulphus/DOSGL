@@ -23,6 +23,13 @@ DJAR  := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-ar
 DJ_CFLAGS := -std=gnu99 -O2 -march=i586 -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include \
              -DMGA_DJGPP=1 -DDGL_BUILD_ID='"$(BUILD_ID)"'
 DJ_TESTFLAGS := -I$(MGAHAL)/tests/shim -DHX_BUILD_ID='"$(BUILD_ID)"'
+# PROF=1: the whole tree with stage timers (MGA_PROF, hal/include/mga/prof.h):
+# DGL_STATS=2 adds a DGL-PROF line a second, 3 also DGL-MICRO at start
+# (tools/perf/profsum.py in the HAL sums them). Needs a Pentium. Building
+# without PROF=1 again returns to the normal library (build/prof_mode).
+ifeq ($(PROF),1)
+DJ_CFLAGS += -DMGA_PROF=1
+endif
 
 # The shared HAL (PRD D15) goes into libGL.a so consumers link only -lGL.
 HAL_SRCS := $(addprefix $(MGAHAL)/hal/,src/debug/serial.c src/pci.c src/chip.c src/vbe.c src/fifo.c \
@@ -33,7 +40,7 @@ LIB := build/lib/libGL.a
 .PHONY: all lib examples sdl sdl-host sdl-examples loopa-sdl tests-host loopa conform conform-dos conform-host classicube loopa-classicube quake loopa-quake halflife loopa-halflife doom loopa-doom setup-djgpp setup-ow dostools 86box sync-hal check-hal clean help
 all: lib examples
 
-build/djgpp/%.o: %.c
+build/djgpp/%.o: %.c build/prof_mode
 	@mkdir -p $(dir $@)
 	$(Q)echo "  DJCC    $<"
 	$(Q)$(DJCC) $(DJ_CFLAGS) -MMD -c -o $@ $<
@@ -46,6 +53,9 @@ build/build_id: FORCE
 	@echo '$(BUILD_ID)' | cmp -s - $@ || echo '$(BUILD_ID)' > $@
 build/djgpp/src/dgl/version.o: build/build_id
 .PHONY: FORCE
+build/prof_mode: FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(PROF)' | cmp -s - $@ || echo '$(PROF)' > $@
 
 # Generated: stubs for the GL 1.1 functions not implemented, and the
 # dglGetProcAddress table (tools/gen_stubs.py; files rewritten only on change).
@@ -165,7 +175,7 @@ loopa-doom: doom dostools
 	tools/doom/run.sh $(MODE) $(CARD)
 
 # Host unit tests.
-HOST_CFLAGS := -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude
+HOST_CFLAGS := -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include
 build/host/test_gl_h_abi: tests/unit/test_gl_h_abi.c include/GL/gl.h include/GL/glext.h
 	@mkdir -p $(dir $@)
 	$(Q)$(HOST_CC) $(HOST_CFLAGS) -Ithird_party/classicube -o $@ $<

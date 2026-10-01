@@ -208,9 +208,14 @@ static void assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, 
 #define I(k) (idx ? idx[k] : first + (k))
     vc.cur++;
     dgl_prims.begins++;
-    if (dgl_sink.begin && !dgl_sink.begin()) {
-        dgl_prims.skipped++;
-        return;
+    if (dgl_sink.begin) {
+        int ok, o = PROF_SWITCH(PROF_D_VALID);
+        ok = dgl_sink.begin();
+        PROF_BACK(o);
+        if (!ok) {
+            dgl_prims.skipped++;
+            return;
+        }
     }
     switch (mode) {
     case GL_TRIANGLES:
@@ -266,6 +271,7 @@ static void assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, 
 
 void dgl_assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, const dgl_vin *imm)
 {
+    PROF_SCOPE(PROF_D_XFORM);
     DGL_FPU_ENTER();
     assemble(mode, count, idx, first, imm);
     DGL_FPU_LEAVE();

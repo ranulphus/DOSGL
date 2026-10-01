@@ -4,6 +4,22 @@
 #define GL_GLEXT_PROTOTYPES 1          /* DOS-GL defines the extension entry points */
 #include <GL/gl.h>
 #include <GL/glext.h>
+#include "mga/prof.h"
+
+/* DOS-GL's profiling stages (make PROF=1; DGL-PROF lines with DGL_STATS=2),
+ * after the HAL's (mga/prof.h): time outside the library is app. */
+enum {
+    PROF_D_XFORM = PROF_CLIENT,     /* dgl_assemble: vertex fetch, transform, copies */
+    PROF_D_VALID,                   /* the sink's begin: state into registers */
+    PROF_D_CLIP,                    /* dgl_clip_polygon */
+    PROF_D_PROJ,                    /* projection, culling */
+    PROF_D_SETUP,                   /* draw_projected before setup_triangle; lines, points */
+    PROF_D_TEX,                     /* glTexImage2D, glTexSubImage2D */
+    PROF_D_CLEAR,                   /* glClear */
+    PROF_D_DRAIN,                   /* SwapBuffers waiting for the engine */
+    PROF_D_VSYNC,                   /* SwapBuffers waiting for retrace */
+    PROF_D_SWAP                     /* the rest of SwapBuffers (flip, statistics) */
+};
 
 /* Column-major 4x4, as GL stores matrices. */
 typedef struct { GLfloat m[16]; } dgl_mat4;

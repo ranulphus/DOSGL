@@ -333,7 +333,9 @@ static float fog_factor(float d)
 
 typedef struct { double x, y; mga_svtx v; } proj;
 
-static void project(const dgl_cvtx *c, proj *p)
+/* Out of line, as it has always been compiled: its float temporaries stay
+ * where they are. */
+static __attribute__((noinline)) void project(const dgl_cvtx *c, proj *p)
 {
     double iw = 1.0 / c->w;
     double xw = dgl_gl.viewport[0] + (c->x * iw + 1.0) * 0.5 * dgl_gl.viewport[2];
@@ -342,8 +344,8 @@ static void project(const dgl_cvtx *c, proj *p)
     p->x = xw;
     p->y = dgl_ctx.height - yw;                 /* screen rows go down */
     memset(&p->v, 0, sizeof p->v);
-    p->v.X16 = (int32_t)lrint(p->x * 16.0);
-    p->v.Y16 = (int32_t)lrint(p->y * 16.0);
+    p->v.X16 = mga_irint_nearest(p->x * 16.0);     /* lrint() inside DGL_FPU_ENTER, without the call */
+    p->v.Y16 = mga_irint_nearest(p->y * 16.0);
     p->v.z = zw < 0 ? 0 : zw > 1 ? 65535.0 : zw * 65535.0;
     p->v.r = c->r * 255.0f; p->v.g = c->g * 255.0f; p->v.b = c->b * 255.0f; p->v.a = c->a * 255.0f;
     p->v.fog = dgl_gl.fog ? 255.0f * fog_factor(c->eye_d) : 255.0f;
@@ -432,6 +434,7 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
     proj p[9];
     int n, i;
     int64_t area2;
+    PROF_SCOPE(PROF_D_CLIP);
     in[0] = *a; in[1] = *b; in[2] = *c;
     if (dgl_gl.shade_model == GL_FLAT)
         for (i = 0; i < 3; i++) {
@@ -443,6 +446,7 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
         dgl_prims.clipped++;
         return;
     }
+    PROF_SWITCH(PROF_D_PROJ);
     for (i = 0; i < n; i++)
         project(&out[i], &p[i]);
     /* Cull on the (unclipped-equivalent) winding of the first three screen
@@ -460,6 +464,7 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
             return;
         }
     }
+    PROF_SWITCH(PROF_D_SETUP);
     for (i = 1; i + 1 < n; i++) {
         tri_offset = 0.0f;
         if (dgl_gl.offset_fill && (dgl_gl.offset_factor != 0.0f || dgl_gl.offset_units != 0.0f)) {
@@ -491,8 +496,8 @@ static void quad(proj *a, proj *b, double ox, double oy)
     {
         int i;
         for (i = 0; i < 4; i++) {
-            q[i].v.X16 = (int32_t)lrint(q[i].x * 16.0);
-            q[i].v.Y16 = (int32_t)lrint(q[i].y * 16.0);
+            q[i].v.X16 = mga_irint_nearest(q[i].x * 16.0);
+            q[i].v.Y16 = mga_irint_nearest(q[i].y * 16.0);
         }
     }
     draw_projected(&q[0], &q[1], &q[2]);
@@ -505,6 +510,7 @@ static void emit_line(const dgl_cvtx *a, const dgl_cvtx *b)
     proj p0, p1;
     int n;
     double dx, dy, hw;
+    PROF_SCOPE(PROF_D_SETUP);
     /* Clip the segment as a degenerate triangle, keep the first two outputs. */
     in[0] = *a; in[1] = *b; in[2] = *b;
     if (dgl_gl.shade_model == GL_FLAT) {
@@ -528,6 +534,7 @@ static void emit_point(const dgl_cvtx *a)
 {
     proj p, q;
     double s = dgl_gl.point_size < 1.0f ? 1.0 : dgl_gl.point_size;   /* a square s pixels wide */
+    PROF_SCOPE(PROF_D_SETUP);
     if (dgl_outcode(a, guard_x, guard_y))
         return;
     project(a, &p);
@@ -559,6 +566,7 @@ void dgl_emit_install(void)
 static void clear(GLbitfield mask)
 {
     int x0, y0, x1, y1;
+    PROF_SCOPE(PROF_D_CLEAR);
     DGL_FPU_ENTER();
     scissor_rows(&x0, &y0, &x1, &y1);
     engine_set_clip(x0, y0, x1, y1);

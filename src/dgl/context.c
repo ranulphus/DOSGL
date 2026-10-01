@@ -35,6 +35,13 @@ static unsigned long stats_swaps0;
 /* DGL_STATS: time the swaps spent waiting for the engine to finish the frame
  * (the drain) and for the retrace, in the second being reported. */
 static uint32_t drain_us, retrace_us;
+#ifdef MGA_PROF
+#include "mga/fp.h"
+#include "mga/regs_mga.h"
+#include <math.h>
+static void prof_start(int level);
+static void prof_report(uint32_t tris);
+#endif
 static unsigned long present0_us;       /* stats.present_us at the last DGL-STAT */
 
 #define ALIGN4K(x) (((x) + 4095u) & ~4095u)
@@ -267,6 +274,9 @@ int dglInit(const DGLConfig *cfg)
         stats_on = e ? atoi(e) : 0;
         stats_t0 = sys_time_us();
         stats_tris0 = setup_stats.tris;
+#ifdef MGA_PROF
+        prof_start(stats_on);
+#endif
     }
     dgl_gl_reset();
     dgl_buffers_reset();                /* buffer objects (buffer.c) go with the old context */
@@ -309,6 +319,79 @@ void dglSetVSync(int enabled)
 
 /* v1.3: the program's function to run while a swap waits (SDL's bridge:
  * the DOS scheduler's yield, so the audio thread refills its ring). */
+#ifdef MGA_PROF
+/* Stage timers (make PROF=1). DGL-PROF, once a second with DGL_STATS=2:
+ * each stage's cycles in units of 1024 (app is the program's own time),
+ * triangles set up, register writes, FIFOSTATUS reads, stage switches and
+ * the cycles one switch costs. DGL-MICRO, at start with DGL_STATS=3: what
+ * single operations cost (in 86Box the emulated cycles, which are not the
+ * hardware's: an MMIO access there costs almost nothing). */
+static uint32_t prof_ovh;
+static volatile double micro_in = 123.456;
+static volatile int32_t micro_out;
+static __attribute__((noinline)) int32_t micro_cast(double v) { return (int32_t)v; }
+static __attribute__((noinline)) int32_t micro_floor(double v) { return mga_ifloor(v); }
+static __attribute__((noinline)) int32_t micro_lrint(double v) { return (int32_t)lrint(v); }
+static __attribute__((noinline)) double micro_div(double v) { return 1.0 / v; }
+
+static void prof_micro(void)
+{
+    uint64_t t0, wr = 0, rd, cast, flo, lr, dv;
+    int i, r;
+    for (r = 0; r < 50; r++) {
+        engine_sync(500000);
+        t0 = prof_rdtsc();
+        for (i = 0; i < 16; i++)
+            MGA_WR32(MGAREG_PLNWT, 0xFFFFFFFFu);
+        wr += prof_rdtsc() - t0;
+    }
+    engine_sync(500000);
+#define LOOP(var, expr) t0 = prof_rdtsc(); for (i = 0; i < 1000; i++) expr; var = (prof_rdtsc() - t0) / 1000
+    LOOP(rd, micro_out = MGA_RD8(MGAREG_FIFOSTATUS));
+    LOOP(cast, micro_out = micro_cast(micro_in));
+    LOOP(flo, micro_out = micro_floor(micro_in));
+    LOOP(lr, micro_out = micro_lrint(micro_in));
+    LOOP(dv, micro_out = (int32_t)micro_div(micro_in));
+#undef LOOP
+    DGL_ERR("DGL-MICRO write=%lu read=%lu cast=%lu ifloor=%lu lrint=%lu div=%lu (cycles each, calls included)",
+            (unsigned long)(wr / 800), (unsigned long)rd, (unsigned long)cast, (unsigned long)flo,
+            (unsigned long)lr, (unsigned long)dv);
+}
+
+static void prof_start(int level)
+{
+    int i;
+    uint64_t t0;
+    if (level >= 3)
+        prof_micro();
+    t0 = prof_rdtsc();
+    for (i = 0; i < 1024; i++) {
+        prof_switch(PROF_D_SWAP);
+        prof_back(PROF_APP);
+    }
+    prof_ovh = (uint32_t)((prof_rdtsc() - t0) >> 11);
+    prof_reset(PROF_APP);
+}
+
+static void prof_report(uint32_t tris)
+{
+    uint32_t sw = 0;
+    int i;
+    prof_back(prof_cur);
+    for (i = 0; i < PROF_N; i++)
+        sw += prof_n[i];
+#define K(s) ((unsigned long)(prof_cyc[s] >> 10))
+    DGL_ERR("DGL-PROF app=%lu fifo=%lu splane=%lu sinc=%lu strap=%lu xform=%lu valid=%lu clip=%lu proj=%lu setup=%lu "
+            "tex=%lu clear=%lu drain=%lu vsync=%lu swap=%lu tris=%lu wr=%lu fiford=%lu sw=%lu ovh=%lu",
+            K(PROF_APP), K(PROF_FIFO), K(PROF_SPLANE), K(PROF_SINC), K(PROF_STRAP), K(PROF_D_XFORM),
+            K(PROF_D_VALID), K(PROF_D_CLIP), K(PROF_D_PROJ), K(PROF_D_SETUP), K(PROF_D_TEX), K(PROF_D_CLEAR),
+            K(PROF_D_DRAIN), K(PROF_D_VSYNC), K(PROF_D_SWAP), (unsigned long)tris, (unsigned long)prof_wr,
+            (unsigned long)prof_fifo_rd, (unsigned long)sw, (unsigned long)prof_ovh);
+#undef K
+    prof_reset(prof_cur);
+}
+#endif
+
 static void (*wait_hook)(void *);
 static void *wait_hook_arg;
 
@@ -329,6 +412,7 @@ static void run_wait_hook(void)
  * waits up to 200 ms before handing over to it. */
 static void drain_with_hook(void)
 {
+    PROF_SCOPE(PROF_D_DRAIN);
     if (wait_hook && mga_mmio) {
         uint32_t start = sys_time_us(), last = start, now;
         while (!engine_idle() && (now = sys_time_us()) - start < 200000u)
@@ -345,6 +429,7 @@ static void drain_with_hook(void)
 static void retrace_wait(void)
 {
     uint32_t t0 = stats_on ? sys_time_us() : 0;
+    PROF_SCOPE(PROF_D_VSYNC);
     if (wait_hook)
         run_wait_hook();
     engine_vsync_wait(50000);
@@ -357,6 +442,7 @@ void dglSwapBuffers(void)
     uint32_t show;
     if (!dgl_ctx.active)
         return;
+    PROF_SCOPE(PROF_D_SWAP);
 #ifdef __DJGPP__
     __djgpp_nearptr_enable();           /* the consumer may have turned near pointers off */
 #endif
@@ -381,6 +467,10 @@ void dglSwapBuffers(void)
                     (unsigned long)((stats.present_us - present0_us) / 1000), stats.wait_hooks);
             drain_us = retrace_us = 0;
             present0_us = stats.present_us;
+#ifdef MGA_PROF
+            if (stats_on >= 2)
+                prof_report(setup_stats.tris - stats_tris0);
+#endif
             if (stats_on >= 2) {
                 DGL_ERR("DGL-PRIMS begins=%lu skipped=%lu tris=%lu clipped=%lu zero=%lu culled=%lu",
                         dgl_prims.begins, dgl_prims.skipped, dgl_prims.tris_in, dgl_prims.clipped,
