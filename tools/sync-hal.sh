@@ -11,9 +11,12 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 dest=$root/third_party/mgahal
 if [ "${1:-}" = --check ]; then
   (cd "$dest" && sha256sum --quiet -c MANIFEST) || { echo "sync-hal: third_party/mgahal differs from its MANIFEST" >&2; exit 1; }
-  # build/ and out/ are generated there (make dostools, setup); anything else is an edit.
+  # build/ and out/ are generated there (make dostools, setup), and Python's
+  # __pycache__ by importing its tools (conformance imports imgcmp); anything
+  # else is an edit.
   extra=$(cd "$dest" && comm -13 <(awk '{print $2}' MANIFEST | sort) \
-          <(find . -type f ! -name MANIFEST ! -path './build/*' ! -path './out/*' ! -path './dist/*' | sort))
+          <(find . -type f ! -name MANIFEST ! -path './build/*' ! -path './out/*' ! -path './dist/*' \
+              ! -path '*/__pycache__/*' | sort))
   [ -z "$extra" ] || { echo "sync-hal: files not in MANIFEST:" >&2; echo "$extra" >&2; exit 1; }
   echo "sync-hal: third_party/mgahal matches MANIFEST ($(cat "$dest/VERSION"))"
   exit 0
