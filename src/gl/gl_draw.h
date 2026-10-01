@@ -6,6 +6,15 @@
 /* An input vertex: object position (x, y, z, w), colour 0..1, texcoord. */
 typedef struct { float pos[4], col[4], tex[2], tex1[2]; } dgl_vin;   /* tex1: texture unit 1 */
 
+/* vertex.c's cache of transformed vertices: a triangle sink gets pointers
+ * into dgl_vslot when it can (no two of the triangle's vertices share a
+ * slot), so it may cache per-slot results, in dgl_vslot_sink, until a slot
+ * is refilled: that sets the slot's byte to 0. Within one dgl_assemble a
+ * slot holds one vertex until it is refilled. */
+#define DGL_VSLOTS 64
+extern dgl_cvtx dgl_vslot[DGL_VSLOTS];
+extern unsigned char dgl_vslot_sink[DGL_VSLOTS];
+
 typedef struct {
     int  (*begin)(void);        /* validate state; 0 = draw nothing */
     void (*triangle)(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *c, const dgl_cvtx *provoking);

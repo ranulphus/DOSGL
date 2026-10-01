@@ -22,13 +22,16 @@ static float dist(const dgl_cvtx *v, int plane, float gx, float gy)
     }
 }
 
+/* dist() for each plane, written out: the same sums and products. */
 unsigned dgl_outcode(const dgl_cvtx *v, float gx, float gy)
 {
     unsigned c = 0;
-    int p;
-    for (p = 0; p < P_COUNT; p++)
-        if (dist(v, p, gx, gy) < 0)
-            c |= 1u << p;
+    if (v->z + v->w < 0) c |= 1u << P_NEAR;
+    if (v->w - v->z < 0) c |= 1u << P_FAR;
+    if (v->x + gx * v->w < 0) c |= 1u << P_LEFT;
+    if (gx * v->w - v->x < 0) c |= 1u << P_RIGHT;
+    if (v->y + gy * v->w < 0) c |= 1u << P_BOTTOM;
+    if (gy * v->w - v->y < 0) c |= 1u << P_TOP;
     return c;
 }
 

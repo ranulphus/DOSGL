@@ -16,6 +16,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 int dgl_stage_word(int stage, const dgl_texenv *e, const dgl_texture *t, uint32_t *w);
 int dgl_env_needs_combiner(GLenum env, const dgl_texture *t);
@@ -371,9 +372,16 @@ static void clamp_colour(mga_svtx *v)
 #undef C
 }
 
-static void draw_projected(const proj *p0, const proj *p1, const proj *p2)
+/* flat: the provoking vertex when its colour is to replace the projected
+ * ones (GL_FLAT on the fast path: the same product project() makes). */
+static void draw_projected(const proj *p0, const proj *p1, const proj *p2, const dgl_cvtx *flat)
 {
     mga_svtx a = p0->v, b = p1->v, c = p2->v;
+    if (flat) {
+        a.r = flat->r * 255.0f; a.g = flat->g * 255.0f; a.b = flat->b * 255.0f; a.a = flat->a * 255.0f;
+        b.r = a.r; b.g = a.g; b.b = a.b; b.a = a.a;
+        c.r = a.r; c.g = a.g; c.b = a.b; c.a = a.a;
+    }
     clamp_colour(&a); clamp_colour(&b); clamp_colour(&c);
     if (tri_offset != 0.0f) {
 #define OFS(v) v.z += tri_offset; if (v.z < 0) v.z = 0; else if (v.z > 65535.0) v.z = 65535.0
@@ -404,7 +412,7 @@ static void mid(dgl_cvtx *o, const dgl_cvtx *a, const dgl_cvtx *b)
 }
 
 static void fog_split(const dgl_cvtx *c0, const dgl_cvtx *c1, const dgl_cvtx *c2,
-                      const proj *p0, const proj *p1, const proj *p2, int depth)
+                      const proj *p0, const proj *p1, const proj *p2, int depth, const dgl_cvtx *flat)
 {
     float lo = p0->v.fog, hi = p0->v.fog;
     double area;
@@ -416,43 +424,90 @@ static void fog_split(const dgl_cvtx *c0, const dgl_cvtx *c1, const dgl_cvtx *c2
     if (p2->v.fog > hi) hi = p2->v.fog;
     area = fabs((p1->x - p0->x) * (p2->y - p0->y) - (p2->x - p0->x) * (p1->y - p0->y)) * 0.5;
     if (depth >= FOG_SPLIT_DEPTH || hi - lo <= FOG_SPLIT || area < 32.0) {
-        draw_projected(p0, p1, p2);
+        draw_projected(p0, p1, p2, flat);
         return;
     }
     mid(&m01, c0, c1); mid(&m12, c1, c2); mid(&m20, c2, c0);
     project(&m01, &q01); project(&m12, &q12); project(&m20, &q20);
-    fog_split(c0, &m01, &m20, p0, &q01, &q20, depth + 1);
-    fog_split(&m01, c1, &m12, &q01, p1, &q12, depth + 1);
-    fog_split(&m20, &m12, c2, &q20, &q12, p2, depth + 1);
-    fog_split(&m01, &m12, &m20, &q01, &q12, &q20, depth + 1);
+    fog_split(c0, &m01, &m20, p0, &q01, &q20, depth + 1, flat);
+    fog_split(&m01, c1, &m12, &q01, p1, &q12, depth + 1, flat);
+    fog_split(&m20, &m12, c2, &q20, &q12, p2, depth + 1, flat);
+    fog_split(&m01, &m12, &m20, &q01, &q12, &q20, depth + 1, flat);
 }
 
 /* ---- Triangles ---------------------------------------------------------- */
+/* Per-slot outcodes and projections of vertex.c's cache (gl_draw.h): a
+ * vertex shared by several triangles of one dgl_assemble is projected
+ * once. project() is out of line and deterministic, so a cached result is
+ * the one a fresh call would give. */
+enum { VS_OC = 1, VS_PROJ = 2 };
+static struct { proj p; unsigned oc; } vs[DGL_VSLOTS];
+
+static int slot_of(const dgl_cvtx *v)
+{
+    uintptr_t d = (uintptr_t)v - (uintptr_t)dgl_vslot;
+    return d < sizeof dgl_vslot ? (int)(d / sizeof dgl_vslot[0]) : -1;
+}
+
+static unsigned slot_oc(int s, const dgl_cvtx *v)
+{
+    if (!(dgl_vslot_sink[s] & VS_OC)) {
+        vs[s].oc = dgl_outcode(v, guard_x, guard_y);
+        dgl_vslot_sink[s] |= VS_OC;
+    }
+    return vs[s].oc;
+}
+
+static const proj *slot_proj(int s, const dgl_cvtx *v)
+{
+    if (!(dgl_vslot_sink[s] & VS_PROJ)) {
+        project(v, &vs[s].p);
+        dgl_vslot_sink[s] |= VS_PROJ;
+    }
+    return &vs[s].p;
+}
+
 static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *c, const dgl_cvtx *prov)
 {
     dgl_cvtx in[3], out[9];
     proj p[9];
-    int n, i;
+    const proj *P[9];
+    const dgl_cvtx *C[9], *flat = NULL;
+    int n, i, sa = slot_of(a), sb = slot_of(b), sc = slot_of(c);
     int64_t area2;
     PROF_SCOPE(PROF_D_CLIP);
-    in[0] = *a; in[1] = *b; in[2] = *c;
-    if (dgl_gl.shade_model == GL_FLAT)
-        for (i = 0; i < 3; i++) {
-            in[i].r = prov->r; in[i].g = prov->g; in[i].b = prov->b; in[i].a = prov->a;
-        }
     dgl_prims.tris_in++;
-    n = dgl_clip_polygon(in, 3, out, guard_x, guard_y);
-    if (n < 3) {
-        dgl_prims.clipped++;
-        return;
+    if (sa >= 0 && sb >= 0 && sc >= 0 && !(slot_oc(sa, a) | slot_oc(sb, b) | slot_oc(sc, c))) {
+        /* Nothing to clip: the vertices as they are, projected once each;
+         * flat colour replaced after projection instead of before. */
+        PROF_SWITCH(PROF_D_PROJ);
+        P[0] = slot_proj(sa, a); P[1] = slot_proj(sb, b); P[2] = slot_proj(sc, c);
+        C[0] = a; C[1] = b; C[2] = c;
+        n = 3;
+        if (dgl_gl.shade_model == GL_FLAT)
+            flat = prov;
+    } else {
+        in[0] = *a; in[1] = *b; in[2] = *c;
+        if (dgl_gl.shade_model == GL_FLAT)
+            for (i = 0; i < 3; i++) {
+                in[i].r = prov->r; in[i].g = prov->g; in[i].b = prov->b; in[i].a = prov->a;
+            }
+        n = dgl_clip_polygon(in, 3, out, guard_x, guard_y);
+        if (n < 3) {
+            dgl_prims.clipped++;
+            return;
+        }
+        PROF_SWITCH(PROF_D_PROJ);
+        for (i = 0; i < n; i++) {
+            project(&out[i], &p[i]);
+            P[i] = &p[i];
+            C[i] = &out[i];
+        }
     }
-    PROF_SWITCH(PROF_D_PROJ);
-    for (i = 0; i < n; i++)
-        project(&out[i], &p[i]);
     /* Cull on the (unclipped-equivalent) winding of the first three screen
      * vertices; y runs down on screen, so GL's counter-clockwise is area < 0. */
-    area2 = (int64_t)(p[1].v.X16 - p[0].v.X16) * (p[2].v.Y16 - p[0].v.Y16) -
-            (int64_t)(p[2].v.X16 - p[0].v.X16) * (p[1].v.Y16 - p[0].v.Y16);
+    area2 = (int64_t)(P[1]->v.X16 - P[0]->v.X16) * (P[2]->v.Y16 - P[0]->v.Y16) -
+            (int64_t)(P[2]->v.X16 - P[0]->v.X16) * (P[1]->v.Y16 - P[0]->v.Y16);
     if (area2 == 0) {
         dgl_prims.zero_area++;
         return;
@@ -470,8 +525,8 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
         if (dgl_gl.offset_fill && (dgl_gl.offset_factor != 0.0f || dgl_gl.offset_units != 0.0f)) {
             /* GL: o = factor * max |dz/dx|, |dz/dy| + units * r, with z in
              * depth-buffer steps (r = one step). */
-            double x1 = p[i].x - p[0].x, y1 = p[i].y - p[0].y, z1 = p[i].v.z - p[0].v.z;
-            double x2 = p[i + 1].x - p[0].x, y2 = p[i + 1].y - p[0].y, z2 = p[i + 1].v.z - p[0].v.z;
+            double x1 = P[i]->x - P[0]->x, y1 = P[i]->y - P[0]->y, z1 = P[i]->v.z - P[0]->v.z;
+            double x2 = P[i + 1]->x - P[0]->x, y2 = P[i + 1]->y - P[0]->y, z2 = P[i + 1]->v.z - P[0]->v.z;
             double det = x1 * y2 - x2 * y1, m = 0;
             if (det != 0) {
                 double dzdx = fabs((z1 * y2 - z2 * y1) / det), dzdy = fabs((x1 * z2 - x2 * z1) / det);
@@ -480,9 +535,9 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
             tri_offset = (float)(dgl_gl.offset_factor * m + dgl_gl.offset_units);
         }
         if (dgl_gl.fog)
-            fog_split(&out[0], &out[i], &out[i + 1], &p[0], &p[i], &p[i + 1], 0);
+            fog_split(C[0], C[i], C[i + 1], P[0], P[i], P[i + 1], 0, flat);
         else
-            draw_projected(&p[0], &p[i], &p[i + 1]);
+            draw_projected(P[0], P[i], P[i + 1], flat);
     }
 }
 
@@ -500,8 +555,8 @@ static void quad(proj *a, proj *b, double ox, double oy)
             q[i].v.Y16 = mga_irint_nearest(q[i].y * 16.0);
         }
     }
-    draw_projected(&q[0], &q[1], &q[2]);
-    draw_projected(&q[0], &q[2], &q[3]);
+    draw_projected(&q[0], &q[1], &q[2], NULL);
+    draw_projected(&q[0], &q[2], &q[3], NULL);
 }
 
 static void emit_line(const dgl_cvtx *a, const dgl_cvtx *b)

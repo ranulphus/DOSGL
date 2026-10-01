@@ -56,6 +56,21 @@ void unit_run(void)
     for (i = 0; i < 4; i++) glVertex3f((float)i, 0, 0);
     glEnd();
     CHECK(ntri == 2 && tris[0][0] == 0 && tris[1][2] == 3);
+    /* Vertices sharing a cache slot (index mod 64): the sink gets copies, so
+     * each is still the right vertex; elsewhere the slots themselves. */
+    {
+        static float far[200][3];
+        static const unsigned short clash[6] = { 0, 64, 128, 1, 65, 2 };
+        for (i = 0; i < 200; i++) { far[i][0] = (float)i; far[i][1] = 0; far[i][2] = 0; }
+        glVertexPointer(3, GL_FLOAT, 0, far);
+        reset(); glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, clash);
+        CHECK(ntri == 2 && tris[0][0] == 0 && tris[0][1] == 64 && tris[0][2] == 128 && tris[0][3] == 128);
+        CHECK(tris[1][0] == 1 && tris[1][1] == 65 && tris[1][2] == 2 && tris[1][3] == 2);
+        reset(); glDrawArrays(GL_TRIANGLE_FAN, 0, 70);                /* (0, 64, 65) clashes */
+        CHECK(ntri == 68 && tris[62][0] == 0 && tris[62][1] == 63 && tris[62][2] == 64);
+        CHECK(tris[63][0] == 0 && tris[63][1] == 64 && tris[63][2] == 65 && tris[63][3] == 65);
+        glVertexPointer(3, GL_FLOAT, 0, pos);
+    }
     /* Errors. */
     glBegin(GL_TRIANGLES); glBegin(GL_TRIANGLES);
     CHECK(glGetError() == GL_INVALID_OPERATION);

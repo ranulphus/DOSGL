@@ -156,36 +156,51 @@ void dgl_fetch_vertex(GLint i, dgl_vin *v)
 
 /* ---- Assembly --------------------------------------------------------- */
 /* A small direct-mapped cache of transformed vertices by source index:
- * shared vertices (quads, strips, indexed meshes) are transformed once. */
-#define VCACHE 64
-typedef struct { const dgl_vin *src; GLint key[VCACHE]; dgl_cvtx v[VCACHE]; unsigned gen[VCACHE], cur; } vcache;
+ * shared vertices (quads, strips, indexed meshes) are transformed once.
+ * The slots are dgl_vslot (gl_draw.h). */
+#define VCACHE DGL_VSLOTS
+typedef struct { GLint key[VCACHE]; unsigned gen[VCACHE], cur; } vcache;
 static vcache vc;
+dgl_cvtx dgl_vslot[DGL_VSLOTS];
+unsigned char dgl_vslot_sink[DGL_VSLOTS];
 
 static const dgl_cvtx *get(GLint idx, const dgl_vin *imm)
 {
     unsigned slot = (unsigned)idx & (VCACHE - 1);
     dgl_vin in;
     if (vc.gen[slot] == vc.cur && vc.key[slot] == idx)
-        return &vc.v[slot];
+        return &dgl_vslot[slot];
     if (imm)
-        in = imm[idx];
-    else
+        dgl_transform(&imm[idx], &dgl_vslot[slot]);    /* the same values as through a copy */
+    else {
         fetch(idx, &in);
-    dgl_transform(&in, &vc.v[slot]);
+        dgl_transform(&in, &dgl_vslot[slot]);
+    }
     vc.key[slot] = idx;
     vc.gen[slot] = vc.cur;
-    return &vc.v[slot];
+    dgl_vslot_sink[slot] = 0;
+    return &dgl_vslot[slot];
 }
 
 /* Triangles carry their provoking vertex for flat shading (GL: the last
- * vertex, except the first for GL_POLYGON). */
+ * vertex, except the first for GL_POLYGON, so it is one of a, b, c). The
+ * sink gets the cache's slots unless two of the vertices share one (a
+ * later get() would refill it); then copies, as it always had. */
 static void tri(GLint a, GLint b, GLint c, GLint prov, const dgl_vin *imm)
 {
-    dgl_cvtx v[3], pv;
-    v[0] = *get(a, imm); v[1] = *get(b, imm); v[2] = *get(c, imm);
-    pv = *get(prov, imm);
-    if (dgl_sink.triangle)
-        dgl_sink.triangle(&v[0], &v[1], &v[2], &pv);
+#define CLASH(x, y) ((x) != (y) && !(((x) ^ (y)) & (VCACHE - 1)))
+    if (!CLASH(a, b) && !CLASH(a, c) && !CLASH(b, c)) {
+        const dgl_cvtx *va = get(a, imm), *vb = get(b, imm), *vcx = get(c, imm), *vp = get(prov, imm);
+        if (dgl_sink.triangle)
+            dgl_sink.triangle(va, vb, vcx, vp);
+    } else {
+        dgl_cvtx v[3], pv;
+        v[0] = *get(a, imm); v[1] = *get(b, imm); v[2] = *get(c, imm);
+        pv = *get(prov, imm);
+        if (dgl_sink.triangle)
+            dgl_sink.triangle(&v[0], &v[1], &v[2], &pv);
+    }
+#undef CLASH
 }
 
 static void line(GLint a, GLint b, const dgl_vin *imm)
