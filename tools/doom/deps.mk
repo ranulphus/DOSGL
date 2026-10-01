@@ -3,4 +3,4 @@
 # local repository only (not published): tools/doom/build.sh reads these
 # lines and exports the commit from $PRBOOM_DIR.
 PRBOOM_DIR    := ~/prboom-plus-dos
-PRBOOM_COMMIT := fc370597df756b8288ddba0b0e5464780ce7f2b4
+PRBOOM_COMMIT := a1fb144a8abc303f2ae60797e8d1cece3b377222
