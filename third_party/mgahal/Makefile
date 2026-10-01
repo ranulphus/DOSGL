@@ -17,7 +17,7 @@ OWENV := env WATCOM=$(WATCOM) PATH=$(OWBIN):$(PATH) INCLUDE=$(WATCOM)/h
 WCC := $(OWENV) $(OWBIN)/wcc386
 OW_CFLAGS := -bt=dos -mf -3s -fp5 -fpi87 -zri -ei -j -zastd=c99 -zq -we -wx -i=hal/include -dMGA_OW=1 -oxt
 
-.PHONY: all hal-djgpp hal-host hal-ow tests-host smoke-djgpp dostests-djgpp dostools setup-djgpp setup-ow 86box clean
+.PHONY: all hal-djgpp hal-host hal-ow tests-host tests-host32 smoke-djgpp dostests-djgpp dostools setup-djgpp setup-ow 86box clean
 all: hal-djgpp hal-host tests-host
 
 build/djgpp/%.o: %.c
@@ -47,8 +47,11 @@ build/djgpp/JOYTEST.EXE: tests/shim/joytest.c tests/shim/hx.c build/djgpp/libmga
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
 build/djgpp/SBBEEP.EXE: tests/shim/sbbeep.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^ -lm
+# The float-to-integer helpers on DJGPP, in 86Box (HX-TEST fpcheck).
+build/djgpp/FPCHECK.EXE: tests/hal/fpcheck.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^ -lm
 dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE \
-                build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE
+                build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE build/djgpp/FPCHECK.EXE
 
 build/host/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -60,8 +63,35 @@ hal-host: build/host/libmgahal.a
 build/host/test_trap: tests/unit/test_trap.c tests/unit/unit.c tests/unit/refrast.c hal/src/setup/trap.c
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) $(HOST_CFLAGS) -o $@ $^ -lm
-tests-host: build/host/test_trap
+# Register state at every draw against the goldens made before the triangle-path
+# performance work (tests/unit/test_setupgold.c); the 32-bit x87 build needs
+# gcc-multilib (tests-host32, e.g. in MGA-Glide's dev container).
+GOLD_SRCS := tests/unit/test_setupgold.c tests/unit/unit.c tests/unit/refrast.c hal/src/setup/trap.c \
+             hal/src/engine.c hal/src/texhw.c hal/src/present.c hal/src/chip.c
+build/host/test_setupgold: $(GOLD_SRCS)
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -o $@ $^ -lm
+build/host32/test_trap: tests/unit/test_trap.c tests/unit/unit.c tests/unit/refrast.c hal/src/setup/trap.c
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ $^ -lm
+build/host32/test_setupgold: $(GOLD_SRCS)
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ $^ -lm
+# The float-to-integer helpers (hal/include/mga/fp.h, setupconv.h).
+build/host/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.inc
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -o $@ tests/unit/test_fp.c tests/unit/unit.c -lm
+build/host32/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.inc
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ tests/unit/test_fp.c tests/unit/unit.c -lm
+tests-host: build/host/test_trap build/host/test_setupgold build/host/test_fp
 	build/host/test_trap
+	build/host/test_setupgold
+	build/host/test_fp
+tests-host32: build/host32/test_trap build/host32/test_setupgold build/host32/test_fp
+	build/host32/test_trap
+	build/host32/test_setupgold
+	build/host32/test_fp
 
 build/ow/%.obj: %.c
 	@mkdir -p $(dir $@)
