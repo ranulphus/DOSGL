@@ -12,6 +12,7 @@
  *   E4 leaving dual texturing            (two texture units only)
  *   E5 paletted textures (TLUT or expanded)
  *   E6 texture cache after in-place texel writes (engine or CPU)
+ *   E8 a queued ILOAD then a CPU write to the same texture (ordering)
  *   E7 identity: PCI config space, revision, OPTION registers
  *
  * Uses DOS-GL internals for the counters and config space, as probe does. */
@@ -449,6 +450,54 @@ static void e6(void)
             dgl_texc.sub_sync - sync0, dgl_texc.sub_full - full0);
 }
 
+/* ---- E8: a queued ILOAD, then a CPU write to the same texture -----------
+ * glTexSubImage2D sends the texels through the engine (ILOAD), behind the
+ * draws already queued. Until 2026-10-01 that did not mark the texture
+ * busy: a texture not drawn since the last sync could then take a
+ * glTexImage2D of the same size in place by the CPU at once, and the late
+ * ILOAD overwrote it. Here: one ILOAD into another texture first (the
+ * switch to ILOAD mode waits for the engine once); a red texture drawn and
+ * synced; quads with a third texture in the top half to keep the engine
+ * busy; the red one's texels sent green (ILOAD, queued behind them), then
+ * replaced blue (glTexImage2D), then drawn: blue, not green. */
+static void e8(void)
+{
+    static unsigned char buf[TS * TS * 4];
+    GLuint t = tex_solid(RED), other = tex_solid(WHITE), busy = tex_pattern(TS, WHITE, BLUE, 1);
+    int i, x, y, bad = 0, green = 0;
+    unsigned long iload0;
+    begin();
+    unit(0, other, GL_REPLACE);
+    quad(600, 200, 608, 208, 1, 0);
+    unit(0, t, GL_REPLACE);
+    quad(16, 64, 144, 192, 1, 0);               /* both resident */
+    glFinish();
+    unit(0, other, GL_REPLACE);
+    fill(buf, TS * TS, WHITE);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TS, TS, GL_RGBA, GL_UNSIGNED_BYTE, buf);   /* ILOAD mode */
+    glFinish();                                 /* t is not busy */
+    unit(0, busy, GL_REPLACE);
+    for (i = 0; i < 10; i++)
+        quad(0, 240, W, H, 1, 0);               /* the engine busy, above the test quad */
+    unit(0, t, GL_REPLACE);
+    iload0 = dgl_texc.sub_iload;
+    fill(buf, TS * TS, GREEN);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TS, TS, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    fill(buf, TS * TS, BLUE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, TS, TS, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    quad(176, 64, 304, 192, 1, 0);
+    show();
+    for (y = 0; y < 128; y += 8)
+        for (x = 0; x < 128; x += 8) {
+            const unsigned char *p = px(176 + x + 4, 64 + y + 4);
+            bad += !is(p, BLUE);
+            green += is(p, GREEN);
+        }
+    save("E8", 176, 64, 128, 128);
+    hx_test("e8-iload-order", bad == 0, "%d of 256 samples not blue (%d green, centre %s); ILOADs %lu", bad, green,
+            cname(px(240, 128)), dgl_texc.sub_iload - iload0);
+}
+
 /* ---- E7: identity -------------------------------------------------------
  * Config space 00h-5Ch (OPTION 40h, OPTION2 50h, OPTION3 54h on the G400),
  * so the bench records which silicon revision each card is. */
@@ -472,7 +521,7 @@ static void e7(void)
 
 int main(int argc, char **argv)
 {
-    const char *only = "124567";
+    const char *only = "1245678";
     GLint n = 1;
     int i;
     for (i = 1; i < argc; i++) {
@@ -503,6 +552,7 @@ int main(int argc, char **argv)
     }
     if (strchr(only, '5')) e5();
     if (strchr(only, '6')) e6();
+    if (strchr(only, '8')) e8();
     hx_test("gl-errors", glGetError() == GL_NO_ERROR, "none expected");
     dglShutdown();
     hx_done(0);

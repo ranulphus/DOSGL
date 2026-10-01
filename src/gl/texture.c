@@ -695,6 +695,7 @@ static int sub_iload(dgl_texture *t, int level, const dgl_palette *pal, int x, i
         engine_iload_row(row);
     }
     engine_iload_end();
+    dgl_texture_drawn(t);               /* the queued ILOAD writes it: busy until the next sync */
     dgl_texc.sub_iload++;
     return 1;
 }
