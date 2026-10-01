@@ -13,6 +13,9 @@
 # --host also builds the whole game for Linux there, against build/sdl/host
 # (desktop SDL3): the build whose demo checksums must equal reference.json.
 #
+# DOOM_CFLAGS adds C flags to the DOS build (e.g. -DDOS_GLCHECK: GL calls
+# DOS-GL refuses logged with their file and line).
+#
 # Output in build/doom:
 #   PRBOOMP.EXE  the game (stripped)    PRBOOMP.SYM  the same, with symbols
 #   PRBOOM.WAD   the data WAD           STAGED.TXT   the commit the build used
@@ -77,12 +80,14 @@ fi
 
 # DOS: DJGPP with SDL's toolchain file, SDL3 and DOS-GL from this tree.
 export PATH=$D/bin:$PATH LD_LIBRARY_PATH=$D/hostlib
+# Both renderers: software (the default, -vidmode 8) and OpenGL through
+# DOS-GL (-vidmode gl), without GLU.
 run cmake -S "$src/prboom2" -B "$out/dos" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$root/third_party/sdl/build-scripts/i586-pc-msdosdjgpp.cmake" \
   -DIMPORT_EXECUTABLES="$out/host/ImportExecutables.cmake" \
   -DSDL3_DIR="$root/build/sdl/dos/lib/cmake/SDL3" \
-  -DBUILD_GL=OFF "${nolibs[@]}" \
-  -DCMAKE_C_FLAGS="$strict -march=pentium -DDOS_BUILD_COMMIT=\\\"$commit\\\" -I$root/include" \
+  -DBUILD_GL=ON "${nolibs[@]}" \
+  -DCMAKE_C_FLAGS="$strict -march=pentium -DDOS_BUILD_COMMIT=\\\"$commit\\\" -I$root/include ${DOOM_CFLAGS:-}" \
   -DCMAKE_EXE_LINKER_FLAGS="-L$root/build/lib"
 run cmake --build "$out/dos" -j"$(nproc)"
 cp "$out/dos/prboom-plus.exe" "$out/PRBOOMP.SYM"

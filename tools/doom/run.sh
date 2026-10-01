@@ -13,8 +13,13 @@
 #          timedemo the same demos shown and heard (SOUND defaults to sb16),
 #                   each also written as DOSBench test <D1|D2>DEMO<N>
 #                   (C:\OUT\RESULTS.TXT; frame DBSHOT, default 200, as
-#                   L<ID>.PPM); GEOM=WxH picks the resolution; checked as
+#                   L<ID>.PPM; <D1|D2>GL<N> with VIDMODE=gl, the OpenGL
+#                   renderer); GEOM=WxH picks the resolution; checked as
 #                   nodraw, plus each test's DOSBench line
+#          play     keys mode with tools/doom/keys/PLAY.keys (default p3play:
+#                   new game, save, load, idclev12, quit, checked from the log)
+#          keys     PRBOOMP.EXE (ARGS, default -iwad DOOM.WAD) with KEYS typed
+#                   into it; then VECCHK, SBCHK and KEYWAIT
 #          cmd      PRBOOMP.EXE with ARGS (default -iwad DOOM.WAD)
 #   CARD   g450 (default), g400 or g200
 # The program's output is in out/NAME/files/*.LOG and on the serial log
@@ -46,7 +51,7 @@ common=(--games-file "$here/games.json" --game doom --card "$card" --out "$root/
         --pre "SET DOOM_SERIAL=1" --pre "SET LFN=n"
         --file "$b/PRBOOMP.EXE=D:/DOOM/PRBOOMP.EXE" --file "$b/PRBOOM.WAD=D:/DOOM/PRBOOM.WAD"
         --mem "${MEM:-64}" --timeout 2400 --idle 300)
-[ "$mode" = timedemo ] && SOUND=${SOUND:-sb16}
+case $mode in timedemo|play|keys) SOUND=${SOUND:-sb16} ;; esac
 if [ "${SOUND:-none}" != none ]; then
   common+=(--sound "$SOUND" --pre "SET BLASTER=A220 I5 D1 H5 T6")
 else
@@ -75,10 +80,23 @@ case $mode in
     cmds=()
     for d in $demos; do
       w=${d%:*} n=${d#*:}
-      id=$( [ "$w" = DOOM2 ] && echo D2 || echo D1 )DEMO$n
-      cmds+=(--cmd "PRBOOMP.EXE -iwad $w.WAD ${GEOM:+-geom $GEOM }-timedemo demo$n -dosbench C:\\OUT $id -dbshot ${DBSHOT:-200} -checksum C:\\OUT\\$id.SUM $* > C:\\OUT\\$id.LOG")
+      id=$( [ "$w" = DOOM2 ] && echo D2 || echo D1 )$( [ "${VIDMODE:-}" = gl ] && echo GL || echo DEMO )$n
+      cmds+=(--cmd "PRBOOMP.EXE -iwad $w.WAD ${GEOM:+-geom $GEOM }${VIDMODE:+-vidmode $VIDMODE }-timedemo demo$n -dosbench C:\\OUT $id -dbshot ${DBSHOT:-200} -checksum C:\\OUT\\$id.SUM $* > C:\\OUT\\$id.LOG")
     done
     set -- "${common[@]}" "${start[@]}" "${cmds[@]}" ;;
+  play|keys)
+    # KEYS typed into PRBOOMP.EXE (Loop A --keys: SECONDS:SCANCODE,...,
+    # @TEXT anchors); play: tools/doom/keys/PLAY.keys (default p3play, the
+    # P3 exit, checked from the log afterwards). After the program: VECCHK
+    # (interrupt vectors as before it), SBCHK (the Sound Blaster stopped),
+    # KEYWAIT (a key through the BIOS) and the config copied out.
+    if [ "$mode" = play ]; then
+      KEYS=${KEYS:-$(sed 's/#.*//; s/^[[:space:]]*//; s/[[:space:]]*$//' "$here/keys/${PLAY:-p3play}.keys" | grep -v '^$' | paste -sd, -)}
+    fi
+    args=${*:-"-iwad DOOM.WAD ${VIDMODE:+-vidmode $VIDMODE}"}
+    set -- "${common[@]}" --keys "${KEYS:?KEYS=SECONDS:SCANCODE,...}" "${start[@]}" --cmd "VECCHK save" \
+      --cmd "PRBOOMP.EXE $args > C:\\OUT\\DOOM.LOG" --cmd "VECCHK check" --cmd "SBCHK" --cmd "KEYWAIT 20" \
+      --cmd "COPY PRBOOM.CFG C:\\OUT > NUL" --cmd "COPY PRBSAV0.DSG C:\\OUT > NUL" ;;
   cmd)
     args=${*:-"-iwad DOOM.WAD"}
     set -- "${common[@]}" "${start[@]}" --cmd "PRBOOMP.EXE $args > C:\\OUT\\DOOM.LOG" \
@@ -91,7 +109,7 @@ rc=0
 [ -n "${NORUN:-}" ] || "$hal/tools/dev" python3 "$hal/tools/loopa/run.py" --name "$name" "$@" || rc=$?
 out=$root/out/$name
 if [ "$mode" = nodraw ] || [ "$mode" = timedemo ]; then
-  MODE=$mode python3 - "$here/reference.json" "$out" $demos <<'EOF' || rc=1
+  MODE=$mode VIDMODE=${VIDMODE:-} python3 - "$here/reference.json" "$out" $demos <<'EOF' || rc=1
 import json, os, re, sys
 ref = json.load(open(sys.argv[1]))["demos"]
 out, demos = sys.argv[2], sys.argv[3:]
@@ -107,7 +125,7 @@ blocks = re.split(r"^(?=HX-START PRBOOMP)", serial, flags=re.M)[1:]
 for i, d in enumerate(demos):
     w, n = d.split(":")
     key = "%s demo%s" % (w, n)
-    sid = ("D2" if w == "DOOM2" else "D1") + "DEMO" + n
+    sid = ("D2" if w == "DOOM2" else "D1") + ("GL" if os.environ.get("VIDMODE") == "gl" else "DEMO") + n
     blk = blocks[i] if i < len(blocks) else ""
     m = re.search(r"^DOOM-TIMED gametics=(\d+)", blk, re.M)
     tics = int(m.group(1)) if m else None
@@ -133,14 +151,36 @@ else:
     tl = [l.split() for l in open(res) if l.startswith("T ")] if res else []
     for d in demos:
         w, n = d.split(":")
-        sid = ("D2" if w == "DOOM2" else "D1") + "DEMO" + n
+        sid = ("D2" if w == "DOOM2" else "D1") + ("GL" if os.environ.get("VIDMODE") == "gl" else "DEMO") + n
         t = [dict(x.split("=", 1) for x in l[1:] if "=" in x) for l in tl if "test=" + sid in l]
         if t:
             t = t[-1]
             print("timedemo: %-8s frames=%s fps=%s p99_ms=%s crc=%s" % (sid, t.get("frames"), t.get("fps"), t.get("p99_ms"), t.get("crc")))
         check("%s DOSBench line" % sid, bool(t))
+    if os.environ.get("VIDMODE") == "gl":
+        # DOS-GL's own log: a stub reached or a GL error raised
+        bad = sorted(set(re.findall(r"^(DGL-STUB \S+|DGL-GLERR \S+)", serial, re.M)))
+        check("no DOS-GL stubs or GL errors", not bad, " ".join(bad))
 sys.exit(0 if ok else 1)
 EOF
+fi
+if [ "$mode" = play ] && [ "${PLAY:-p3play}" = p3play ]; then
+  # the P3 exit: new game, save, load, a level change, quit; then the
+  # machine as it was: vectors, Sound Blaster, keyboard, text mode
+  log=$(tr -d '\r' < "$out/serial.log" 2>/dev/null)
+  check() { if grep -qE "$2" <<<"$log"; then echo "play: ok   $1"; else echo "play: FAIL $1"; rc=1; fi; }
+  check "new game (E1M1)" "^DOOM-LEVEL E1M1"
+  check "saved to slot 1" "^DOOM-LOG G_DoSaveGame: \[1\]"
+  check "loaded slot 1" "^DOOM-LOG G_DoLoadGame: \[1\]"
+  check "idclev12 (E1M2)" "^DOOM-LEVEL E1M2"
+  check "clean exit" "^HX-DONE 0"
+  check "vectors restored" "^HX-VECCHK ok"
+  check "Sound Blaster stopped" "^HX-SBCHK .*stopped"
+  check "keyboard through the BIOS" "^HX-KEY scan=39"
+  check "text mode" "^HX-VMODE bios=03"
+  for f in PRBOOM.CFG PRBSAV0.DSG; do
+    if find "$out/files" -iname "$f" | grep -q .; then echo "play: ok   $f written"; else echo "play: FAIL $f"; rc=1; fi
+  done
 fi
 for f in DOOM.LOG; do
   p=$(find "$out/files" -iname "$f" 2>/dev/null | head -1)
