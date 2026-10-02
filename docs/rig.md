@@ -23,7 +23,7 @@ reaches the card through its sysfs resource files (MGA-Glide's Loop C,
 | Program | What |
 |---|---|
 | `build/rig/conform/tNN` | the conformance tests (`tests/conform/ct_rig.c`); frames to `$CT_OUT/<name>.ppm` |
-| `build/rig/rigbench` | batches of triangles (16-1024 px; flat, Gouraud, textured, textured and blended; with and without Z) timed until `glFinish`, and the raw register write rate: on a fast host CPU the time is the chip's and the bus's |
+| `build/rig/rigbench` | batches of triangles (16-1024 px; flat, Gouraud, textured, textured and blended; with and without Z) timed until `glFinish`, and the raw register write rate: on a fast host CPU the time is the chip's and the bus's. Each case reports the triangles the HAL set up (`set_up=`), and `HX-TEST drawn` fails if a case set up fewer than it drew: before 2026-10-02 every batch was at eye z +0.5, outside `glOrtho(..., 0, 1)`, so the cases timed rejection |
 
 All are static; they need root (the resource files) and `RIG_BDF`.
 

@@ -61,7 +61,9 @@ static GLuint make_texture(void)
     return t;
 }
 
-/* ntris right triangles of about area px pixels each, tiled over the screen. */
+/* ntris right triangles of about area px pixels each, tiled over the screen,
+ * at eye z -0.5: inside glOrtho(..., 0, 1)'s depth range (z 0 to -1). At
+ * +0.5 every one was clipped away and the cases timed rejection. */
 static void draw_batch(int ntris, int area, int shade)
 {
     float leg = 1.0f;
@@ -80,18 +82,18 @@ static void draw_batch(int ntris, int area, int shade)
             glColor3ub(200, 120, 40);
         if (i & 1) {
             if (shade == GOURAUD) glColor3ub(255, 0, 0);
-            glTexCoord2f(0, 0); glVertex3f(x, y, 0.5f);
+            glTexCoord2f(0, 0); glVertex3f(x, y, -0.5f);
             if (shade == GOURAUD) glColor3ub(0, 255, 0);
-            glTexCoord2f(1, 1); glVertex3f(x + leg, y + leg, 0.5f);
+            glTexCoord2f(1, 1); glVertex3f(x + leg, y + leg, -0.5f);
             if (shade == GOURAUD) glColor3ub(0, 0, 255);
-            glTexCoord2f(1, 0); glVertex3f(x + leg, y, 0.5f);
+            glTexCoord2f(1, 0); glVertex3f(x + leg, y, -0.5f);
         } else {
             if (shade == GOURAUD) glColor3ub(255, 255, 0);
-            glTexCoord2f(0, 0); glVertex3f(x, y, 0.5f);
+            glTexCoord2f(0, 0); glVertex3f(x, y, -0.5f);
             if (shade == GOURAUD) glColor3ub(0, 255, 255);
-            glTexCoord2f(0, 1); glVertex3f(x, y + leg, 0.5f);
+            glTexCoord2f(0, 1); glVertex3f(x, y + leg, -0.5f);
             if (shade == GOURAUD) glColor3ub(255, 0, 255);
-            glTexCoord2f(1, 1); glVertex3f(x + leg, y + leg, 0.5f);
+            glTexCoord2f(1, 1); glVertex3f(x + leg, y + leg, -0.5f);
         }
     }
     glEnd();
@@ -134,7 +136,7 @@ int main(int argc, char **argv)
 {
     static const int sizes[] = { 16, 64, 256, 1024 };
     DGLConfig c;
-    int reps = argc > 1 ? atoi(argv[1]) : 7, s, sh, z, i;
+    int reps = argc > 1 ? atoi(argv[1]) : 7, s, sh, z, i, clipped = 0;
     memset(&c, 0, sizeof c);
     c.width = W;
     c.height = H;
@@ -157,9 +159,18 @@ int main(int argc, char **argv)
         for (s = 0; s < (int)(sizeof sizes / sizeof sizes[0]); s++)
             for (z = 0; z <= 1; z++) {
                 int ntris = sizes[s] >= 1024 ? 1000 : 4000;
-                double us = time_case(ntris, sizes[s], sh, z, reps);
-                printf("HX-RIG case=%s-%dpx%s tris=%d us_med=%.0f us_per_tri=%.3f mpix_s=%.2f\n", shade_name[sh],
-                       sizes[s], z ? "-z" : "", ntris, us, us / ntris, (double)ntris * sizes[s] / us);
+                unsigned long before, set_up;
+                double us;
+                dglSwapBuffers();                  /* DGLStats' triangles: the HAL's count, at a swap */
+                before = dglGetStats()->triangles;
+                us = time_case(ntris, sizes[s], sh, z, reps);
+                dglSwapBuffers();
+                set_up = dglGetStats()->triangles - before;
+                printf("HX-RIG case=%s-%dpx%s tris=%d us_med=%.0f us_per_tri=%.3f mpix_s=%.2f set_up=%lu\n",
+                       shade_name[sh], sizes[s], z ? "-z" : "", ntris, us, us / ntris,
+                       (double)ntris * sizes[s] / us, set_up);
+                if (set_up < (unsigned long)ntris * (unsigned long)(reps < 16 ? reps : 16))
+                    clipped++;                     /* timing rejection, not drawing */
             }
     {
         /* The bus alone: writes to a drawing register the engine only latches
@@ -178,6 +189,7 @@ int main(int argc, char **argv)
                words * 4.0 / t[reps / 2]);
     }
     printf("HX-TEST gl-errors %s\n", glGetError() == GL_NO_ERROR ? "PASS" : "FAIL");
+    printf("HX-TEST drawn %s %d cases set up fewer triangles than they drew\n", clipped ? "FAIL" : "PASS", clipped);
     dglShutdown();
     printf("HX-DONE 0\n");
     return 0;
