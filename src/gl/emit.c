@@ -9,6 +9,7 @@
 #include "gl_draw.h"
 #include "gl_tex.h"
 #include "../dgl/dgl.h"
+#include "mga/fp.h"
 #include "mga/tex.h"
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
