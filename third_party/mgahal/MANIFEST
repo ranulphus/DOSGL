@@ -1,12 +1,12 @@
 b95fdd062dbe9bdb197937afed9e7bcb36bbe859714461ba491d2d5398061ba9  ./LICENSE
 c786ed61dad5f754774d1eb2ad0f41b3b1f7062e4d9937d09b50df139ef11488  ./Makefile
-97c5cba08a6b39d61f8bb378f71971e82e4ecb2881cba9a0b1912c4815263ca0  ./README.md
-9e0bbec90b792d3f6b6ff9d5dfa4e6391d664771a3a988eae5be90c542a780f1  ./VERSION
+4f135beec160673fba0f358e8d13f564977a56f7b75d5f588c17fa3848df83ac  ./README.md
+87a2792a5c2633b8711a6fc00cd0c78bcc6b09adf0b033c5357ba0a2c482fb03  ./VERSION
 347b558992b3cb92d605fbfcd2299d52f33b4ecc127301251d0a738ae455d8ad  ./docs/bench.md
 39c7c575f4dc96b90844d784cef74c2913dcd3840f5a350d3285fe1301c9d309  ./docs/emulated-g200.md
 d7cff2af82e3a72e3338155f148c88729a1f6e5d30199a45e88836475440df79  ./docs/emulated-g400.md
 d582f1e354321b46dbe81fcb19885510e3582da1fc35e5aa548998bb3c0ca137  ./docs/loop-c-results.md
-3335c5b060cd8673975e5e524ac90bf062cb74de62c02253204a6bfe3e743cb6  ./docs/loops.md
+43b6805ede6b5be070dd17baf6c9b5f63a23afe4eae36f55f88de612f5225397  ./docs/loops.md
 9d411263c8bb0ceff794c236bb926c66e3a74377ac15162b797b4597f67b1d1f  ./docs/reference-gaps.md
 d4971a2cb4e3597d12106a24cf69551b55c4f28ebcc643429d4e70bc7b9aaa1e  ./hal/include/mga/fp.h
 b1c7a1e93662570c874570fde229ed5af6fb2a9a26c9cb196e762302005ca964  ./hal/include/mga/hal.h
@@ -85,7 +85,8 @@ cb474ab4691e791e7b6cc36f324a492e3ba524ec303b70372de1f914504264de  ./tools/86box/
 7a82797db762eb3fd4fc1594f8f41229cf636e0ef44d91b21d61e0db4f8bd533  ./tools/86box/patches/local/0108-cpu-vme-iopl3-redirect.patch
 dd6fc6134eeac7c1d10b907e99f25771bf9fe6e1756ccaf3571be3b06bc092a1  ./tools/86box/patches/local/0109-cpu-popfd-vif-vip.patch
 4f2d456f7b3f3f85dae9c30e9f03b61faf559bbbab72fdb117b196fce1685105  ./tools/86box/patches/local/0110-cpu-iopb-two-bytes.patch
-f7458992d57f4f12ce4559502d35c6197bf547f642a8950d3af2a0a26d35bcca  ./tools/86box/series
+00b3289890c2318e017156e038797b8dc0d3fe14212aac57f59f71ff08093bf5  ./tools/86box/patches/local/0111-unix-ignore-sigpipe.patch
+fb54d45c71a4f2e71014f54f7777961c60a8d3655871eaa8dc70e254de17bdca  ./tools/86box/series
 23c01a93dd5a617cdba52a9af12513a80fe04c6ce7fabad6e2b988c1ef6c4e91  ./tools/86box/windows/README.md
 d859974028067b00d8308463d1132ed2b8af8b3c4642a16f12062d09541c7b91  ./tools/86box/windows/build-windows.sh
 25ab96ebf830daf6a9ac0e2cefe57fdd264d6a28f3792cd99ecf023696430f85  ./tools/bench/bench.toml
@@ -98,7 +99,7 @@ adae1694c64260f069c886927e79856581c6243fdc80cb1212f158297ba39515  ./tools/bench/
 c8b563880058400929e4b8f242e63aa0d9988b9f1f4752a50d50004b0da450dd  ./tools/bench/vpc.py
 f2f3d7821893b2b88c3f042426c175b974fa97c997d53b489abc38bbe7d1aabc  ./tools/dev
 d393c88163718822c84aad2f4ec06e8ec308f0b9f8eba6d6eb9403d2f97139aa  ./tools/docker/Dockerfile
-06b26554f6b385925f1f5b8fdc6722809fc2e0819a6abc38d68c4896b1b15521  ./tools/docker/packages.txt
+a04614e73edeb6023b0a418f10893e0591058af1c07b434469b489fe8f4e27e9  ./tools/docker/packages.txt
 36fb9973ec292f8af67c8db8519b45f132bd2ea27c1e3313f62b4210d6b42ca0  ./tools/dos/com2echo.c
 8a0f3a8be16f0ad96285c32e3c6ea11468b279aeff9a3c41c231fb1d531e972d  ./tools/dos/keywait.c
 6e3d05a4cde1d6c45df67a2470f10274b0ff7fa66df4ab5bc0e0ecb792708cc6  ./tools/dos/reboot.c
@@ -119,7 +120,7 @@ a5bd5bd9b61c631525d2e9ddc8222f12dd82d88830531f5e87230e63f46cc164  ./tools/loopa/
 2721b6ce434af1fa3726178b268fd04fb210814f3fe7e61cf97f951d507eb43c  ./tools/loopa/dos-himemx/FDCONFIG.SYS
 6afe42f4e89d72c3460e8aafb94a7981255153b9149e504e6c4f6c097aa7f2ea  ./tools/loopa/dos/AUTOEXEC.BAT
 2772dcdb07d4b155ab07e8e4b4a518b05c429499289ace1b689700f0c4e773ee  ./tools/loopa/dos/FDCONFIG.SYS
-8518ecbc28effc16a79c3f88fe0f13c3ebbdb6cc64dbcb365d5dfc3dddcec65c  ./tools/loopa/hostio.py
+bd15ae86ab8c3c8a1631836a12f9e629f3c24546dc6361ec6c74902150676d16  ./tools/loopa/hostio.py
 e7a99467f5a812d189fc6264a974e49cfea4517a50e44fb6512ec9648f4ae89b  ./tools/loopa/mkgolden-variant.sh
 b173d4415d70f681c7fd5538ea44aae6b0bfb519d42fc58d327f3a45b2f9f403  ./tools/loopa/mkgolden.sh
 3ccf8f9fc770d45a78e90b8b5a3364fd72833f751d18b12d760923dab58ae8a2  ./tools/loopa/png.py
@@ -135,7 +136,7 @@ c85b3e893b0d4f25e362db431ebb7bc8bea1aa080c1d174d861ada952f208386  ./tools/loopa/
 f15bd62a059121a84bafdd08cb8f828fede71088c21e3d1379a72107e485e0aa  ./tools/loopa/ref/rtl8139.txt
 461856c7199783f9294f22ab8ceeeee090bdc2dd0cf73f7368e33c8db4528862  ./tools/loopa/ref/vpc-g200.txt
 9d021bc9b1df77c9d3ab98e03385cb912c87d34e08eaee33afa3b943bd113968  ./tools/loopa/ref/wrap-dynarec.txt
-461bc36508d278bd5d4eb23967696d469d34c011152ef95d5dfc3895d5bb940b  ./tools/loopa/run.py
+ec55d7a47bc0f6eab821c4046a046690d46bbbf45817ba5de6cf43aa724d2a01  ./tools/loopa/run.py
 a646184c998efaf7f0c79dc52089e7259d71f51276fb02da17cb828a069182ae  ./tools/loopa/samepix.py
 062dc6e612e20b5099e19335f07ddec8012520760f2ceedcdc3ef78d5cf8b383  ./tools/loopa/selftest_ext.py
 49d8a42ae05223f67473ea82a440fd77a67ea4cf22bf3b301920c0ddb9338701  ./tools/loopa/wavcheck.py
