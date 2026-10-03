@@ -77,6 +77,15 @@ build/host32/test_trap: tests/unit/test_trap.c tests/unit/unit.c tests/unit/refr
 build/host32/test_setupgold: $(GOLD_SRCS)
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ $^ -lm
+# Edge terms within the chips' AR fields (tests/unit/test_edges.c).
+EDGE_SRCS := tests/unit/test_edges.c tests/unit/unit.c tests/unit/refrast.c hal/src/setup/trap.c \
+             hal/src/engine.c hal/src/texhw.c hal/src/present.c hal/src/chip.c
+build/host/test_edges: $(EDGE_SRCS)
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -o $@ $^ -lm
+build/host32/test_edges: $(EDGE_SRCS)
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ $^ -lm
 # The float-to-integer helpers (hal/include/mga/fp.h, setupconv.h).
 build/host/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.inc
 	@mkdir -p $(dir $@)
@@ -84,14 +93,16 @@ build/host/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.in
 build/host32/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.inc
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ tests/unit/test_fp.c tests/unit/unit.c -lm
-tests-host: build/host/test_trap build/host/test_setupgold build/host/test_fp
+tests-host: build/host/test_trap build/host/test_setupgold build/host/test_fp build/host/test_edges
 	build/host/test_trap
 	build/host/test_setupgold
 	build/host/test_fp
-tests-host32: build/host32/test_trap build/host32/test_setupgold build/host32/test_fp
+	build/host/test_edges
+tests-host32: build/host32/test_trap build/host32/test_setupgold build/host32/test_fp build/host32/test_edges
 	build/host32/test_trap
 	build/host32/test_setupgold
 	build/host32/test_fp
+	build/host32/test_edges
 
 build/ow/%.obj: %.c
 	@mkdir -p $(dir $@)

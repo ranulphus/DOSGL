@@ -38,7 +38,9 @@ static int force_combiner;
 static uint32_t tc2_extra;
 /* DGL_GUARD_PX: how far from the viewport's centre screen coordinates may
  * reach before triangles are clipped (default 2000, the setup's range);
- * smaller clips more but keeps edge and texture gradients shorter. */
+ * smaller clips more but keeps edge and texture gradients shorter. Edges
+ * stay within 4000 pixels, which the HAL fits into the G200's 18-bit AR
+ * fields (up to 8191; MGA-Glide docs/loop-c-results.md). */
 static float guard_px = 2000.0f;
 static int skip_all;                  /* depth or alpha function NEVER, or no context */
 static float tri_offset;              /* glPolygonOffset for the triangle being drawn (depth steps) */

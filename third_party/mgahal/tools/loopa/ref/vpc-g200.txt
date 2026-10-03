@@ -5,37 +5,37 @@ confirm_reset = 0
 sound_gain = 0
 
 [Machine]
-machine = @MACHINE@
-cpu_family = @CPU_FAMILY@
-cpu_speed = @CPU_SPEED@
-cpu_multi = @CPU_MULTI@
-cpu_use_dynarec = @DYNAREC@
+machine = bf6
+cpu_family = pentium2_deschutes
+cpu_speed = 350000000
+cpu_multi = 3.5
+cpu_use_dynarec = 1
 fpu_type = internal
-mem_size = @MEM_KB@
+mem_size = 65536
 time_sync = disabled
 
-@MACHINE_EXTRA@[Video]
-gfxcard = @GFXCARD@
-voodoo = @VOODOO@
+[Video]
+gfxcard = millennium_g200
+voodoo = 0
 
-[@GFXNAME@]
-memory = @G100_MB@
+[Matrox Millennium G200 (MGA-Glide emulation)]
+memory = 8
 
 [3DFX Voodoo Graphics]
 type = voodoo
 framebuffer_memory = 2
 texture_memory = 2
-render_threads = @VOODOO_THREADS@
-recompiler = @VOODOO_RECOMPILER@
+render_threads = 1
+recompiler = 0
 bilinear = 1
 dithersub = 1
 
 [Input devices]
 keyboard_type = keyboard_ps2
-mouse_type = @MOUSE@
-@JOYSTICK@
+mouse_type = none
+
 [Sound]
-sndcard = @SNDCARD@
+sndcard = none
 
 [Storage controllers]
 hdc = internal
@@ -44,7 +44,7 @@ fdc = internal
 [Ports (COM & LPT)]
 serial1_enabled = 1
 serial1_device = file
-serial2_enabled = @COM2@
+serial2_enabled = 0
 lpt1_enabled = 0
 
 [File (COM) #1]
@@ -55,7 +55,7 @@ append = 0
 hdd_01_parameters = 63, 16, 1000, 0, ide
 hdd_01_fn = @CIMG@
 hdd_01_ide_channel = 0:0
-@EXTRA_HDD@
+
 
 [Floppy and CD-ROM drives]
 fdd_01_type = 35_2hd
@@ -64,8 +64,15 @@ fdd_01_check_bpb = 0
 fdd_02_type = none
 
 [Other peripherals]
-unittester_enabled = 1
+unittester_enabled = 0
 
 [86Box Unit Tester]
 exit_enabled = 1
-@TAIL@
+
+[Network]
+net_01_card = ne2k
+net_01_net_type = slirp
+
+[NE2000 Compatible #1]
+base = 0300
+irq = 10
