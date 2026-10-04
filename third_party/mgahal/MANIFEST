@@ -1,12 +1,12 @@
 b95fdd062dbe9bdb197937afed9e7bcb36bbe859714461ba491d2d5398061ba9  ./LICENSE
 c786ed61dad5f754774d1eb2ad0f41b3b1f7062e4d9937d09b50df139ef11488  ./Makefile
-4f135beec160673fba0f358e8d13f564977a56f7b75d5f588c17fa3848df83ac  ./README.md
-87a2792a5c2633b8711a6fc00cd0c78bcc6b09adf0b033c5357ba0a2c482fb03  ./VERSION
+e21362c982e05a9b203decc7a92680c05a7e8fb97dee040be60800fe131746e1  ./README.md
+b2f8bc3a14034d276385d4d5087b173f0f945c945961cf4aa4ba9b06b37af41f  ./VERSION
 347b558992b3cb92d605fbfcd2299d52f33b4ecc127301251d0a738ae455d8ad  ./docs/bench.md
 39c7c575f4dc96b90844d784cef74c2913dcd3840f5a350d3285fe1301c9d309  ./docs/emulated-g200.md
 d7cff2af82e3a72e3338155f148c88729a1f6e5d30199a45e88836475440df79  ./docs/emulated-g400.md
 d582f1e354321b46dbe81fcb19885510e3582da1fc35e5aa548998bb3c0ca137  ./docs/loop-c-results.md
-43b6805ede6b5be070dd17baf6c9b5f63a23afe4eae36f55f88de612f5225397  ./docs/loops.md
+7145a8e551431ba359f38f509cf498d14ac738fb4a0d1fb73d9f56161fbb529c  ./docs/loops.md
 9d411263c8bb0ceff794c236bb926c66e3a74377ac15162b797b4597f67b1d1f  ./docs/reference-gaps.md
 d4971a2cb4e3597d12106a24cf69551b55c4f28ebcc643429d4e70bc7b9aaa1e  ./hal/include/mga/fp.h
 b1c7a1e93662570c874570fde229ed5af6fb2a9a26c9cb196e762302005ca964  ./hal/include/mga/hal.h
@@ -86,7 +86,8 @@ cb474ab4691e791e7b6cc36f324a492e3ba524ec303b70372de1f914504264de  ./tools/86box/
 dd6fc6134eeac7c1d10b907e99f25771bf9fe6e1756ccaf3571be3b06bc092a1  ./tools/86box/patches/local/0109-cpu-popfd-vif-vip.patch
 4f2d456f7b3f3f85dae9c30e9f03b61faf559bbbab72fdb117b196fce1685105  ./tools/86box/patches/local/0110-cpu-iopb-two-bytes.patch
 00b3289890c2318e017156e038797b8dc0d3fe14212aac57f59f71ff08093bf5  ./tools/86box/patches/local/0111-unix-ignore-sigpipe.patch
-fb54d45c71a4f2e71014f54f7777961c60a8d3655871eaa8dc70e254de17bdca  ./tools/86box/series
+bf1ac6daae281fa838b58f2a20465d806db656c17c079043914531a642af45ed  ./tools/86box/patches/local/0112-dynarec-load-seg-limits.patch
+56e40a5691f9584bf1468c61ace78bb4d7274f5e073e83b04e02d02c241eff40  ./tools/86box/series
 23c01a93dd5a617cdba52a9af12513a80fe04c6ce7fabad6e2b988c1ef6c4e91  ./tools/86box/windows/README.md
 d859974028067b00d8308463d1132ed2b8af8b3c4642a16f12062d09541c7b91  ./tools/86box/windows/build-windows.sh
 25ab96ebf830daf6a9ac0e2cefe57fdd264d6a28f3792cd99ecf023696430f85  ./tools/bench/bench.toml
