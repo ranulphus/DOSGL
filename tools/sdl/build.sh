@@ -16,7 +16,10 @@ src=$root/third_party/sdl
 work=$root/build/sdl/src-$target
 prefix=$root/build/sdl/$target
 [ -f "$src/CMakeLists.txt" ] || { echo "sdl: submodule missing (git submodule update --init third_party/sdl)" >&2; exit 1; }
-rm -rf "$work" "$prefix"; mkdir -p "$work"
+# The installed library stays in place until the new one is ready: programs
+# that link against it while it rebuilds (Fifth Wheel builds against ~/DOSGL)
+# see the old or the new, never none. Installed into $prefix.new, then swapped.
+rm -rf "$work" "$prefix.new"; mkdir -p "$work"
 (cd "$src" && git archive HEAD) | tar -x -C "$work"
 for p in "$root"/tools/sdl/patches/*.patch; do
   [ -e "$p" ] || continue
@@ -37,6 +40,10 @@ else
   extra=(-DSDL_X11_XTEST=OFF -DSDL_X11_XSCRNSAVER=OFF)
 fi
 { cmake -S "$work" -B "$work/build" "${common[@]}" "${extra[@]}" &&
-  cmake --build "$work/build" -j"$(nproc)" && cmake --install "$work/build"; } > "$log" 2>&1 \
+  cmake --build "$work/build" -j"$(nproc)" && cmake --install "$work/build" --prefix "$prefix.new"; } > "$log" 2>&1 \
   || { tail -40 "$log"; echo "sdl: build failed ($log)" >&2; exit 1; }
+rm -rf "$prefix.old"
+[ -d "$prefix" ] && mv "$prefix" "$prefix.old"
+mv "$prefix.new" "$prefix"
+rm -rf "$prefix.old"
 echo "sdl: $prefix/lib/libSDL3.a ($(git -C "$src" rev-parse --short HEAD))"
