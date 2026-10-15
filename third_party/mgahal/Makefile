@@ -5,7 +5,7 @@ WATCOM ?= $(HOME)/.local/opt/watcom-20260901
 export WATCOM DJGPP_PREFIX DJGPP_URL DJGPP_SHA256 CWSDPMI_URL CWSDPMI_SHA256 OW_URL OW_SHA256
 Q ?= @
 
-HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/present.c hal/src/setup/trap.c
+HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/present.c hal/src/setup/trap.c hal/src/vram.c hal/src/blit.c hal/src/cursor.c
 
 DJENV := env LD_LIBRARY_PATH=$(DJGPP_PREFIX)/hostlib
 DJCC := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-gcc
@@ -36,6 +36,9 @@ build/djgpp/HELLO.EXE: tests/shim/hello.c tests/shim/hx.c build/djgpp/libmgahal.
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
 build/djgpp/PROBE.EXE: tests/hal/probe.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
+# The 2D primitives, cursor and display start (docs/matrox-2d.md; tools/loopa/twodtest.py).
+build/djgpp/TWODTEST.EXE: tests/hal/twodtest.c tests/hal/sw2d.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
 # The emulator's DPMI stack check (docs/loops.md): must PASS in Loop A.
 build/djgpp/STACKPG.EXE: tests/shim/stackpg.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
@@ -51,7 +54,7 @@ build/djgpp/SBBEEP.EXE: tests/shim/sbbeep.c tests/shim/hx.c build/djgpp/libmgaha
 build/djgpp/FPCHECK.EXE: tests/hal/fpcheck.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^ -lm
 dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE \
-                build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE build/djgpp/FPCHECK.EXE
+                build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE build/djgpp/FPCHECK.EXE build/djgpp/TWODTEST.EXE
 
 build/host/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -93,11 +96,16 @@ build/host/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.in
 build/host32/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.inc
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ tests/unit/test_fp.c tests/unit/unit.c -lm
-tests-host: build/host/test_trap build/host/test_setupgold build/host/test_fp build/host/test_edges
+# The VRAM allocator (hal/src/vram.c).
+build/host/test_vram: tests/unit/test_vram.c tests/unit/unit.c hal/src/vram.c
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -o $@ $^
+tests-host: build/host/test_trap build/host/test_setupgold build/host/test_fp build/host/test_edges build/host/test_vram
 	build/host/test_trap
 	build/host/test_setupgold
 	build/host/test_fp
 	build/host/test_edges
+	build/host/test_vram
 tests-host32: build/host32/test_trap build/host32/test_setupgold build/host32/test_fp build/host32/test_edges
 	build/host32/test_trap
 	build/host32/test_setupgold

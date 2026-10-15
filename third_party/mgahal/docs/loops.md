@@ -92,7 +92,8 @@ with `tools/loopa/ref/`. It needs no emulator; after a deliberate change,
 | Option | What it does |
 |---|---|
 | `--machine bf6\|486dx2\|486dx4` | `bf6` is the Pentium II 350 above. The 486 profiles are a Shuttle HOT-433A (UMC 8881, PCI, AwardBIOS 4.51PG) with an i486DX2-66 (no CR4, no CPUID) or an Intel iDX4-100 (CR4 with VME and PVI). Each profile has its own NVRAM cache. |
-| `--card vbe` | An S3 Trio64V2/DX with its "Generic" BIOS (VBE 2.0, 4 MB, linear framebuffer). The default on the 486 profiles: 86Box's Matrox cards are AGP, so a Matrox card there is a setup error. `VBEINFO` reports the VBE version, memory and modes. |
+| `--card vbe` | An S3 Trio64V2/DX with its "Generic" BIOS (VBE 2.0, 4 MB, linear framebuffer). The default on the 486 profiles: 86Box's Matrox cards are AGP, so an AGP Matrox card there is a setup error. `VBEINFO` reports the VBE version, memory and modes. |
+| `--card g200pci\|g400pci\|g450pci` | PCI versions of the G200, G400 and G450 (local patch 0116), for any profile. The G200 has Matrox's PCI BIOS (899-33) and the PCI device ID 0520h; the G400 and G450 have the same BIOSes and IDs as the AGP ones. Each has the memory of its AGP twin (`--g100-mb`, at least 16 MB on the G400 and G450). |
 | `--boot-cfg himemx` | A boot floppy with `DEVICE=HIMEMX.EXE` and `DOS=HIGH` (`tools/loopa/mkgolden-variant.sh`; HIMEMX pinned from the FreeDOS 1.4 repository). The default floppy and its key are untouched. `XMSINFO` reports the XMS driver and whether DOS is in the HMA. |
 | `--boot-cfg glosshell`, `glosshell-himemx` | GLOS as the DOS shell: `SHELL=C:\TEST\GLOS.EXE /SHELL /P=A:\AUTOEXEC.BAT /E:2048`, without and with HIMEMX (FreeDOS ignores a `SHELL=` line much longer than this; GLOS finds `A:\FREEDOS\BIN\COMMAND.COM` itself). The job supplies `GLOS.EXE` and `GLOSK.BIN` in `C:\TEST` (`--file`); GLOS runs AUTOEXEC.BAT and so RUN.BAT. Used by GLOS's own tests. |
 | `--net CARD` | A network card on SLiRP (`ne2k` ISA at 300h IRQ 10, `ne2kpci`, `rtl8139c+`, `i82557`, `i82558`) with host TCP ports forwarded into the guest: `--net-fwd [HOST:]GUEST`, default guest port 22 on a free host port, recorded in `result.json`. `--net-dos` puts the Crynwr NE2000 packet driver and mTCP's DHCP and NC on C:. |
@@ -113,6 +114,7 @@ picks some) checks them:
 | `com2` | `COM2ECHO` echoing a line from the bridge |
 | `himemx` | XMS 3.0 with DOS high, then HELLO and STACKPG |
 | `cpu` | V86TEST on all three profiles |
+| `pci` | The HAL's PROBE on the 486dx2 with each PCI Matrox card |
 
 **V86TEST** (`tests/cpu/`) is a CPU self-test for the paths a virtual-8086
 monitor depends on.
@@ -133,9 +135,12 @@ monitor depends on.
   - the RTC rate;
   - FPU error reporting;
   - IOPL changes under the dynarec;
-  - a load past a segment's limit, from code the dynarec has compiled (case V).
+  - a load past a segment's limit, from code the dynarec has compiled (case V);
+  - single-stepping onto an instruction that faults (case W);
+  - EFLAGS.ID after an IRETD, on CPUs with and without CPUID (case X);
+  - DR0-DR3 execute and data breakpoints (case Y).
 
-It found six places where 86Box differed, and GLOS's DJGPP tests a seventh. Local patches fix them:
+It found six places where 86Box differed, and GLOS's tests found more. Local patches fix them:
 - **0106:** a VME-redirected INT pushes IF = VIF and IOPL = 3.
 - **0107:** INT3 and INTO in V86 mode go through the IDT.
 - **0108:** the redirection bitmap applies at IOPL 3.
@@ -148,6 +153,27 @@ It found six places where 86Box differed, and GLOS's DJGPP tests a seventh. Loca
   djtst205: DJGPP turns Ctrl-C and its timer into signals by cutting DS's limit to 4 KB in the IRQ handler, and
   in a loop that only reads, the fault never came, under any DPMI host. Flat segments (DOS/4GW) compile as
   before; V86TEST case V covers it.
+- **0113:** a faulting instruction takes no single-step trap. Found by GLOS's M4c: lDebugX stepping V86 code
+  onto an ARPL (#UD in V86 mode, GLOS's breakpoint into its monitor) got a #DB in GLOS's ring-0 #UD handler.
+  An exception raised during the instruction (#UD, #DE, #BR, #NM) left the TF trap pending, and it was taken
+  at the handler's first instruction once the gate had cleared TF. DR6.BS was never set for a single step
+  either (DR6 read 0). V86TEST case W.
+- **0114:** IRETD loads only the EFLAGS[31:16] bits the CPU model has, as POPFD does. On the 486DX2 an IRETD
+  with ID set (into V86 mode, to ring 0 or ring 3) kept ID, and the next trap frame showed it: GLOS builds the
+  V86 FLAGS image from that frame, so lDebugX saw ID toggle and ran CPUID into #UD. An IRETD in V86 mode at
+  IOPL 3 now loads RF, AC and ID. V86TEST case X.
+- **0115:** 86Box is built with its debug-register support (the DEBUGREGS486 option), so DR0-DR3 execute and
+  data breakpoints fire on every profile: none did before, and GLOS's DPMI watchpoints (0B00h) never
+  triggered. While a data breakpoint is enabled, or an execute breakpoint is near the code being run, the
+  dynarec interprets; with DR7 clear, compiled code is unchanged. The Pentium II's CPUID now reports DE, as
+  silicon does. V86TEST case Y.
+
+- **0116:** PCI versions of the G200, G400 and G450 (GLOS's D38: a 486 with a Matrox card). 86Box has the
+  Matrox G-series as AGP cards only, though its Matrox code already handles a card without AGP (the
+  Mystique). The new devices are the same cards on the PCI bus: the G200 reads device ID 0520h and boots
+  Matrox's PCI BIOS, 899-33 from the same package as 900-33 (the AGP BIOS on a PCI G200 found 2 MB and no
+  linear framebuffer); the G400 and G450 keep their BIOSes and device ID 0525h. Whether a real PCI G450's
+  BIOS differs is a bench question (the user's G450 is a PCI board).
 
 `tests/cpu/known-86box.txt` lists any remaining deviation the check accepts.
 It is empty; the RTC firing with register C unread and PGE having no effect
