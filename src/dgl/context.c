@@ -499,6 +499,26 @@ static void run_wait_hook(void)
     wait_hook(wait_hook_arg);
 }
 
+/* In long work outside the swap (a texture's texels written or converted):
+ * the hook (SDL's yield: its audio thread refills its ring), at most every
+ * 4 ms. The engine may have changed hands in it under GLOS (the hook runs
+ * another thread's code, which may call GLOS): taken back before the caller
+ * goes on, with the HAL's target and clip and GL's state written again. */
+void dgl_yield_maybe(int engine)
+{
+    static uint32_t last;
+    uint32_t now;
+    if (!wait_hook)
+        return;
+    now = sys_time_us();
+    if (now - last < 4000u)
+        return;
+    run_wait_hook();
+    last = sys_time_us();
+    if (engine)                               /* (in work with the engine: it is the program's again) */
+        DGL_GPU_ENTER();
+}
+
 /* dgl_sync, with the hook run about once a millisecond while the engine
  * finishes the frame. The engine's own timeout stays dgl_sync's: this only
  * waits up to 200 ms before handing over to it. */

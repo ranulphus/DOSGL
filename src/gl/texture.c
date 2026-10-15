@@ -578,6 +578,8 @@ static void unpack(GLenum format, const void *pixels, int w, int h, unsigned cha
     int stride = (w * bytes + dgl_gl.unpack_align - 1) / dgl_gl.unpack_align * dgl_gl.unpack_align;
     for (y = 0; y < h; y++) {
         unsigned char *d = dst + (size_t)y * dst_stride;
+        if ((y & 15) == 15)
+            dgl_yield_maybe(0);
         dgl_to_rgba(format, (const unsigned char *)pixels + (size_t)y * stride, w, d);
         dgl_apply_ifmt(ifc, d, w);
     }
@@ -804,6 +806,8 @@ static void write_level(const dgl_texture *t, int l, int hwfmt, uint32_t off, in
     int n = hw_w * (hwfmt == DGL_TW8 ? 1 : 2) / 4, span = hw_w < L->w ? hw_w : L->w, x, y, i;
     for (y = 0; y < hw_h; y++, dst += n) {
         int sy = y;
+        if ((y & 15) == 15)
+            dgl_yield_maybe(1);                   /* (a big texture's rows take a while: the sound's turn) */
         if (sy >= L->h) sy = t->wrap_t != GL_REPEAT ? L->h - 1 : sy % L->h;
         memset(row, 0, (size_t)n * 4);
         pack_span(t, hwfmt, L, pal, (size_t)sy * L->w, span, row, 0);

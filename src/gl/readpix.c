@@ -29,6 +29,8 @@ void APIENTRY glReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format
     for (j = 0; j < h; j++, row += stride) {
         int sy = dgl_ctx.height - 1 - (y + j);     /* GL row -> screen row */
         unsigned char *p = row;
+        if ((j & 15) == 15)
+            dgl_yield_maybe(0);                    /* (a whole frame read back takes a while: the sound's turn) */
         for (i = 0; i < w; i++, p += bpp) {
             int sx = x + i;
             unsigned r = 0, g = 0, b = 0;

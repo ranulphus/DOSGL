@@ -63,6 +63,8 @@ extern dgl_context dgl_ctx;
 
 uint32_t dgl_color_off(int front);        /* VRAM offset of the shown (1) or hidden (0) buffer */
 void dgl_retarget(void);                  /* point the engine at dgl_ctx.draw_front's buffer */
+void dgl_yield_maybe(int engine);         /* long work: the program's wait hook, at most every 4 ms (engine:
+                                             in work that uses the engine, taken back after it) */
 
 /* glos.c: in a window on a GLOS desktop (GLOS's PRD §9.7, §10.3). */
 typedef struct {
