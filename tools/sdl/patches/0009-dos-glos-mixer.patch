@@ -24,10 +24,10 @@ index 5999f84..db4db37 100644
  
 diff --git a/src/audio/dos/SDL_glosaudio.c b/src/audio/dos/SDL_glosaudio.c
 new file mode 100644
-index 0000000..81437cd
+index 0000000..70553e9
 --- /dev/null
 +++ b/src/audio/dos/SDL_glosaudio.c
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,180 @@
 +/*
 +  Simple DirectMedia Layer
 +  Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
@@ -89,6 +89,18 @@ index 0000000..81437cd
 +    device->spec.format = SDL_AUDIO_S16LE;
 +    if (device->spec.channels > 2) {
 +        device->spec.channels = 2;
++    }
++    // The mixer's own rate (a stream's header says it): SDL converts to it once, the mixer not again, and the
++    // ring holds that much more time.
++    b = 0;
++    if (GLOS_Call(GLOS_FN_AUDIO, &a, &b, 22050, 2, 4096) == 0) {
++        GLOS_Stream *probe = (GLOS_Stream *)GLOS_Pointer(b);
++        unsigned id = a;
++        if (probe && probe->mixer_rate >= 4000 && probe->mixer_rate <= 48000) {
++            device->spec.freq = (int)probe->mixer_rate;
++        }
++        b = 1;
++        GLOS_Call(GLOS_FN_AUDIO, &a, &b, id, 0, 0);
 +    }
 +    if (device->spec.freq < 4000 || device->spec.freq > 48000) {
 +        device->spec.freq = 22050;
