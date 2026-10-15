@@ -52,6 +52,9 @@ dglShutdown();
   cooperative threads yield there; SDL's DOS-GL bridge does
   (`docs/sdl.md`). The hook must not call GL. `DGL-STAT` counts it
   (`hooks=`).
+  It also runs during long work outside the swap, at most every 4 ms: a texture's texels written into VRAM or
+  converted, a frame read back with `glReadPixels` (a program's sound thread kept up through first frames and
+  level loads: GLOS M8).
 - `dglGetProcAddress(name)` returns any GL 1.1 function and the extension
   functions DOS-GL implements (for programs that bind GL at run time).
 - Test hooks, over COM1:
