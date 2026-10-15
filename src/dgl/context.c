@@ -187,6 +187,7 @@ static int init_glos(const DGLConfig *cfg)
         dgl_textures_reset(l.heap_off, l.heap_end);
     }
     dgl_emit_install();
+    DGL_GPU_QUIET();
     DGL_INFO("DGL-INIT %dx%d pitch=%d double=%d depth=%d heap=%lu..%lu window (GLOS)", c.width, c.height,
              dgl_ctx.pitch_px, dgl_ctx.double_buffer, dgl_ctx.depth_bits, (unsigned long)l.heap_off,
              (unsigned long)l.heap_end);
@@ -595,6 +596,7 @@ void dglSwapBuffers(void)
         dgl_ctx.front_is_a = !dgl_ctx.front_is_a;
         set_target();
         dgl_gl.dirty |= DGL_DIRTY_TARGET | DGL_DIRTY_RASTER;
+        DGL_GPU_QUIET();                /* (the program's own work until the next frame's drawing) */
         return;
     }
     if (dgl_ctx.scaled) {

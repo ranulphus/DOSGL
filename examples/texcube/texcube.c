@@ -1,5 +1,7 @@
 /* texcube - M4 rung 4: textured, mipmapped, fogged cubes spinning, with an
- * alpha-tested cutout and a translucent quad; --frames N, --bench. */
+ * alpha-tested cutout and a translucent quad; --frames N, --bench. --hang:
+ * after 30 frames it begins one (a clear: the engine is its own) and never
+ * finishes it, for GLOS's watchdog (GLOS M8). */
 #include "hx.h"
 #include <GL/gl.h>
 #include <GL/dosgl.h>
@@ -27,6 +29,12 @@ int main(int argc, char **argv)
     texscene_setup();
     t0 = uclock();
     for (f = 0; f < hx_args.frames; f++) {
+        if (hx_args.hang && f == 30) {
+            hx_log("HX-TEXCUBE hang at frame %d", f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            for (;;)
+                ;
+        }
         texscene_draw(f);
         if (f < hx_args.frames - 1)
             dglSwapBuffers();

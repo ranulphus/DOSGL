@@ -73,6 +73,7 @@ typedef struct {
 typedef struct {
     int on;                               /* the context is in a GLOS window */
     volatile unsigned *held, *lost;       /* GLOS's page: the engine is the program's; how often others had it */
+    volatile unsigned *quiet;             /* ... and ours: no engine work now, the lock may go (glos.c) */
     unsigned seen, resyncs;
     volatile void *share;
 } dgl_glos_state;
@@ -85,7 +86,10 @@ void dgl_glos_slow(void);
 void dgl_glos_close(void);
 int  dgl_glos_modes(DGLMode *out, int max);       /* the sizes a window can have on the desktop */
 /* Before each piece of work with the engine: the lock, and the HAL told if someone else had the engine. */
-#define DGL_GPU_ENTER() do { if (dgl_glos.on && (!*dgl_glos.held || *dgl_glos.lost != dgl_glos.seen)) \
-                                 dgl_glos_slow(); } while (0)
+#define DGL_GPU_ENTER() do { if (dgl_glos.on) { *dgl_glos.quiet = 0; \
+                                 if (!*dgl_glos.held || *dgl_glos.lost != dgl_glos.seen) dgl_glos_slow(); } } while (0)
+/* Where long work without the engine begins (reading pixels back, converting textures, between frames): GLOS may
+   give the engine to the desktop meanwhile; the next DGL_GPU_ENTER takes it back. No engine work until then. */
+#define DGL_GPU_QUIET() do { if (dgl_glos.on) *dgl_glos.quiet = 1; } while (0)
 
 #endif

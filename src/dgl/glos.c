@@ -167,6 +167,7 @@ int dgl_glos_open(dgl_glos_layout *l)
     dgl_glos.share = sh;
     dgl_glos.held = &sh->held;
     dgl_glos.lost = &sh->lost;
+    dgl_glos.quiet = &sh->quiet;
     dgl_glos.seen = *dgl_glos.lost - 1u;        /* (resynchronised before the first use) */
     /* The window: the context's size, where GLOS likes, titled with the program's name. */
     memset(&w, 0, sizeof w);

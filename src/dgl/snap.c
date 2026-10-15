@@ -39,6 +39,7 @@ int dglSnapshot(const char *path)
         return -1;
     }
     dgl_sync();                                   /* the LFB is not ordered with queued draws */
+    DGL_GPU_QUIET();
     fb = (const volatile uint16_t *)(mga_fb + dgl_color_off(dgl_ctx.draw_front));
     fprintf(f, "P6\n%d %d\n255\n", dgl_ctx.width, dgl_ctx.height);
     for (y = 0; y < dgl_ctx.height; y++) {

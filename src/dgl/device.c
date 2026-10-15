@@ -106,6 +106,20 @@ static void add_mode(int w, int h)
 int dgl_discover(void)
 {
     int i, j;
+    if (dgl_glos.on) {
+        /* In a GLOS window: the chip is what GLOS described (glos.c), and the
+         * PCI bus is GLOS's, not the program's to probe (the probe would
+         * find nothing and wipe `mga` on its way). */
+        memset(&info, 0, sizeof info);
+        info.chip_name = mga.name;
+        info.device_id = mga.device_id;
+        info.revision = mga.revision;
+        info.fb_phys = mga.fb_phys;
+        info.mmio_phys = mga.mmio_phys;
+        info.fifo_depth = mga.fifo_depth;
+        info.vram_bytes = mga.vram_bytes;
+        return 0;
+    }
     if (discovered)
         return discovered > 0 ? 0 : -1;
     discovered = -1;
