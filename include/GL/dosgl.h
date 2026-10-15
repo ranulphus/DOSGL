@@ -56,8 +56,9 @@ typedef struct {
     unsigned long wait_hooks;       /* times the wait hook ran (v1.3) */
 } DGLStats;
 
-/* The API's version: 0x0103 is 1.3 (DOS-GL 0.3), which added dglSetWaitHook. */
-#define DGL_API_VERSION 0x0103
+/* The API's version: 0x0103 is 1.3 (DOS-GL 0.3), which added dglSetWaitHook;
+   0x0104 the window on a GLOS desktop and dglGetGlosWindow. */
+#define DGL_API_VERSION 0x0104
 
 /* The library's version string, e.g. "DOS-GL 0.3 (<build>)". */
 const char *dglVersion(void);
@@ -86,6 +87,13 @@ const DGLStats *dglGetStats(void);
    extension functions DOS-GL implements; NULL for anything else. Whether an
    extension may be used is still decided by glGetString(GL_EXTENSIONS). (v1.1) */
 void *dglGetProcAddress(const char *name);
+
+/* v1.4: under GLOS, on a desktop that can show GL in a window (a Matrox card
+   at 16 bits a pixel; DGL_FULLSCREEN=1 asks for the screen instead), dglInit
+   opens a window of the context's size rather than setting a mode, and the
+   program becomes a GLOS app. The window's GLOS id (for GLOS's own calls: its
+   title, its events), or 0 when the context is full-screen or there is none. */
+unsigned int dglGetGlosWindow(void);
 
 /* Write the buffer being drawn (the next frame, when double-buffered) to
    path as a binary PPM; 0 on success. For tests and bug reports. (v1.1) */

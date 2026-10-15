@@ -64,4 +64,28 @@ extern dgl_context dgl_ctx;
 uint32_t dgl_color_off(int front);        /* VRAM offset of the shown (1) or hidden (0) buffer */
 void dgl_retarget(void);                  /* point the engine at dgl_ctx.draw_front's buffer */
 
+/* glos.c: in a window on a GLOS desktop (GLOS's PRD §9.7, §10.3). */
+typedef struct {
+    int width, height, pitch_px, double_buffer, depth;          /* in */
+    uint32_t front_off, back_off, z_off, heap_off, heap_end;    /* out: blocks of VRAM GLOS gave */
+    uint32_t vram_bytes;
+} dgl_glos_layout;
+typedef struct {
+    int on;                               /* the context is in a GLOS window */
+    volatile unsigned *held, *lost;       /* GLOS's page: the engine is the program's; how often others had it */
+    unsigned seen, resyncs;
+    volatile void *share;
+} dgl_glos_state;
+extern dgl_glos_state dgl_glos;
+int  dgl_glos_want(void);                 /* GLOS can show this program's GL in a window (and DGL_FULLSCREEN isn't set) */
+int  dgl_glos_open(dgl_glos_layout *l);   /* the program an app, the chip from GLOS, a window, its VRAM: 0, or -1 */
+void dgl_glos_show(uint32_t off);         /* the window shows this colour buffer (a swap) */
+void dgl_glos_visible(void);
+void dgl_glos_slow(void);
+void dgl_glos_close(void);
+int  dgl_glos_modes(DGLMode *out, int max);       /* the sizes a window can have on the desktop */
+/* Before each piece of work with the engine: the lock, and the HAL told if someone else had the engine. */
+#define DGL_GPU_ENTER() do { if (dgl_glos.on && (!*dgl_glos.held || *dgl_glos.lost != dgl_glos.seen)) \
+                                 dgl_glos_slow(); } while (0)
+
 #endif

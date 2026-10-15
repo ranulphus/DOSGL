@@ -209,6 +209,8 @@ uint32_t dgl_known_vram(void)
 int dglEnumModes(DGLMode *out, int max_modes)
 {
     int i;
+    if (dgl_glos_want())                        /* under GLOS: the sizes a window can have */
+        return dgl_glos_modes(out, max_modes);
     if (dgl_discover() != 0)
         return 0;
     for (i = 0; i < nmodes; i++)

@@ -86,6 +86,33 @@ counts underruns: with the audio log category at debug priority
 (`SDL_SetLogPriority(SDL_LOG_CATEGORY_AUDIO, SDL_LOG_PRIORITY_DEBUG)`), closing
 the device logs `SoundBlaster: U of N chunks underran`.
 
+## Under GLOS
+
+Under GLOS (a graphical DOS whose DPMI host answers 0A00h "GLOS"), on a
+desktop that can show OpenGL in a window (a Matrox card at 16 bits a
+pixel: GLOS's `GLOS_CAP_GLWIN`), SDL picks its `glos` drivers (patches
+0008 and 0009) before `vesa` and `soundblaster`, and the program becomes a
+GLOS app:
+
+- **Windows.** A window is a GLOS window of its size; "fullscreen" is a
+  window of the mode's size (the desktop stays), and the mode list is the
+  usual sizes that fit on the desktop. A software window's pixels are
+  GLOS's, RGB565, presented by rectangle. An OpenGL window is DOS-GL's own
+  (DOS-GL opens it at `SDL_GL_CreateContext`; `dglGetGlosWindow`), its
+  size fixed for the context's life as on DOS.
+- **Input** comes as GLOS events: keys (set 1 codes, through the same
+  tables as the IRQ 1 driver), the mouse in the window's client area
+  (relative mode from the moves between positions), focus, size, and close
+  requests. The joystick is the gameport, as on DOS.
+- **Audio** goes into GLOS's mixer, which has the Sound Blaster: a stream
+  in pages shared with GLOS that the audio thread keeps full, yielding as
+  the `soundblaster` driver does. Closing the device logs `GLOS: U of N
+  chunks underran` (the mixer's periods), in patch 0005's form.
+
+Elsewhere (plain DOS, an 8- or 32-bit desktop, GLOS without a Matrox card)
+the same program takes the screen as before; under GLOS it then runs as a
+session. `SDL_VIDEO_DRIVER=vesa` forces that.
+
 ## Leaving the machine usable
 
 `SDL_Quit` restores the keyboard, stops the Sound Blaster and puts the
@@ -105,6 +132,8 @@ chains to SDL's.
 | `0004-dos-joystick-four-axes` | read the gameport's third and fourth axes when present (4-axis sticks, wheels with pedals); calibrate around the rest position (the first move to an end was lost and set the centre there) | bug fix + feature |
 | `0005-dos-audio-count-underruns` | the Sound Blaster IRQ handler counts the chunks it had to play as silence; logged (audio category, debug) when the device closes | diagnostics |
 | `0006-dos-audio-fill-the-ring-before-yielding` | the audio thread yielded on every wait, so it mixed one chunk per turn and a game yielding once per 37 ms frame underran; it now fills the ring and yields when full, or after 10 ms without a yield (slow mixing must not starve the main thread) | bug fix |
+| `0008-dos-glos-windows` | the `glos` video driver: windows, events and OpenGL through DOS-GL's GLOS window on a GLOS desktop (above); `vesa` stays for plain DOS | new backend |
+| `0009-dos-glos-mixer` | the `glos` audio driver: a stream into GLOS's mixer; `soundblaster` stays for plain DOS | new backend |
 | `0007-dos-audio-give-up-a-silent-card` | with BLASTER naming the wrong IRQ the card never asks for audio, the ring stays full and the program hung closing the device; once a full ring has not drained for a second, the driver logs why (an error: is the card on IRQ n?) and gives the device up, and the program carries on silent | bug fix |
 
 `tools/sdl/build.sh` applies them to a copy of the pinned source; the

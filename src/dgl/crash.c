@@ -18,6 +18,13 @@ void dgl_teardown(void)
     if (!graphics)
         return;
     graphics = 0;
+    if (dgl_glos.on) {                          /* a GLOS window: GLOS has the screen and the engine's state */
+        if (*dgl_glos.held)
+            engine_sync(100000);
+        dgl_glos_close();
+        dgl_ctx.active = 0;
+        return;
+    }
     if (mga_mmio && engine_sync(100000) != 0)
         engine_reset();
 #ifndef DGL_RIG

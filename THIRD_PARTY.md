@@ -4,6 +4,7 @@
 |---|---|---|
 | `third_party/mgahal/` | The shared Matrox HAL, test harness, bench tooling and local 86Box patches, vendored from MGA-Glide (`tools/sync-hal.sh`; version in `VERSION`) | MIT (same author) |
 | `third_party/classicube/` | ClassiCube, pinned submodule (the reference consumer, PRD §11.6) | BSD-3-Clause (ClassiCube's own licence) |
+| `third_party/glos/api.h` | GLOS's public API header (its `include/glos/api.h`, version 1.1): the numbers and structures DOS-GL's GLOS path calls (`src/dgl/glos.c`) | MIT (same author) |
 | `third_party/sdl/` | SDL3, pinned upstream submodule; `tools/sdl/patches/` adds OpenGL through DOS-GL and DOS fixes (`docs/sdl.md`) | zlib (SDL's own licence); the patches are offered under the same terms |
 
 Derived register definitions inside the HAL carry their upstream notices

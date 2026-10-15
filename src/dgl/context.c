@@ -65,6 +65,7 @@ uint32_t dgl_color_off(int front)
 static void set_target(void)
 {
     mga_target t;
+    DGL_GPU_ENTER();
     memset(&t, 0, sizeof t);
     t.color_off = dgl_color_off(dgl_ctx.draw_front);
     t.z_off = dgl_ctx.z_off;
@@ -115,6 +116,83 @@ void dgl_present_front(void)
     present(1);
 }
 
+static void after_init(const DGLConfig *c);
+
+/* Under GLOS with a desktop that can show GL in a window (glos.c): a window of
+   the context's size, its buffers and texture heap in VRAM GLOS gives; no mode
+   set, no palette, no display start. Any size the engine can draw. */
+static int init_glos(const DGLConfig *cfg)
+{
+    static const DGLConfig zero;
+    DGLConfig c;
+    dgl_glos_layout l;
+    int r;
+    if (!cfg || !memcmp(cfg, &zero, sizeof zero)) {
+        memset(&c, 0, sizeof c);
+        c.width = 640; c.height = 480; c.color_bits = 16; c.depth_bits = 16;
+        c.double_buffer = 1; c.vsync = 1;
+    } else {
+        c = *cfg;
+        if (!c.width || !c.height) { c.width = 640; c.height = 480; }
+    }
+    if (c.color_bits && c.color_bits != 16) {
+        dgl_set_error("only 16-bit colour is supported");
+        return -1;
+    }
+    if (c.width < 1 || c.height < 1 || !dgl_pitch_for(c.width) || c.height > 2048) {
+        dgl_set_error("no %dx%d window", c.width, c.height);
+        return -1;
+    }
+    memset(&dgl_ctx, 0, sizeof dgl_ctx);
+    memset(&l, 0, sizeof l);
+    l.width = c.width;
+    l.height = c.height;
+    l.pitch_px = dgl_pitch_for(c.width);
+    l.double_buffer = c.double_buffer != 0;
+    l.depth = c.depth_bits != 0;
+    if ((r = dgl_glos_open(&l)) != 0)
+        return r;
+    dgl_ctx.width = c.width;
+    dgl_ctx.height = c.height;
+    dgl_ctx.pitch_px = dgl_ctx.disp_pitch_px = l.pitch_px;
+    dgl_ctx.double_buffer = l.double_buffer;
+    dgl_ctx.depth_bits = l.depth ? 16 : 0;
+    dgl_ctx.vsync = 0;                          /* (the desktop shows the window when it composes) */
+    dgl_ctx.front_off = l.front_off;
+    dgl_ctx.back_off = l.back_off;
+    dgl_ctx.z_off = l.depth ? l.z_off : 0;
+    dgl_ctx.heap_off = l.heap_off;
+    dgl_ctx.vram_bytes = l.vram_bytes;
+    dgl_ctx.plan.disp.width = (uint16_t)c.width;
+    dgl_ctx.plan.disp.height = (uint16_t)c.height;
+    dgl_ctx.plan.dw = c.width;
+    dgl_ctx.plan.dh = c.height;
+    dgl_crash_install();
+    DGL_GPU_ENTER();
+    engine_init(dgl_ctx.pitch_px, 16);
+    dgl_ctx.front_is_a = 1;
+    dgl_ctx.active = 1;
+    memset(&stats, 0, sizeof stats);
+    dgl_ctx.front_is_a = 0; set_target(); engine_fill(0, 0, c.width, c.height, 0);
+    dgl_ctx.front_is_a = 1; set_target(); engine_fill(0, 0, c.width, c.height, 0);
+    if (dgl_ctx.z_off)
+        engine_fill_depth(0, 0, c.width, c.height, 0xFFFF);
+    engine_sync(500000);
+    dgl_glos_show(dgl_ctx.front_off);
+    dgl_glos_visible();
+    after_init(&c);
+    {
+        const char *e = getenv("DGL_TEXHEAP_KB");       /* (glos.c sized the heap's block by it already) */
+        (void)e;
+        dgl_textures_reset(l.heap_off, l.heap_end);
+    }
+    dgl_emit_install();
+    DGL_INFO("DGL-INIT %dx%d pitch=%d double=%d depth=%d heap=%lu..%lu window (GLOS)", c.width, c.height,
+             dgl_ctx.pitch_px, dgl_ctx.double_buffer, dgl_ctx.depth_bits, (unsigned long)l.heap_off,
+             (unsigned long)l.heap_end);
+    return 0;
+}
+
 int dglInit(const DGLConfig *cfg)
 {
     static const DGLConfig zero;
@@ -126,6 +204,11 @@ int dglInit(const DGLConfig *cfg)
     if (dgl_ctx.active) {
         dgl_set_error("dglInit called twice");
         return -1;
+    }
+    if (dgl_glos_want()) {
+        int r = init_glos(cfg);
+        if (r <= 0)
+            return r;                   /* (1: GLOS won't have it as an app: the screen, as on DOS) */
     }
     if (!cfg || !memcmp(cfg, &zero, sizeof zero)) {
         memset(&c, 0, sizeof c);        /* PRD §8.1 defaults */
@@ -262,6 +345,28 @@ int dglInit(const DGLConfig *cfg)
     engine_sync(500000);
     show_start(dgl_ctx.scaled ? dgl_ctx.disp_off[0] : dgl_ctx.front_off,
                (dgl_ctx.scaled ? dgl_ctx.disp_pitch_px : dgl_ctx.pitch_px) * 2);
+    after_init(&c);
+    {
+        /* DGL_TEXHEAP_KB caps the texture heap (tests of eviction, or a
+         * smaller card's memory on a bigger one). */
+        const char *e = getenv("DGL_TEXHEAP_KB");
+        uint32_t end = dgl_ctx.vram_bytes, kb = e ? (uint32_t)strtoul(e, NULL, 10) : 0;
+        if (kb && dgl_ctx.heap_off + kb * 1024u < end)
+            end = dgl_ctx.heap_off + kb * 1024u;
+        dgl_textures_reset(dgl_ctx.heap_off, end);
+    }
+    dgl_emit_install();
+    DGL_INFO("DGL-INIT %dx%d pitch=%d double=%d depth=%d heap=%lu..%lu display=%dx%d fit=%s", c.width, c.height,
+             dgl_ctx.pitch_px, dgl_ctx.double_buffer, dgl_ctx.depth_bits, (unsigned long)dgl_ctx.heap_off,
+             (unsigned long)dgl_ctx.vram_bytes, pl->disp.width, pl->disp.height, mga_fit_name(pl->fit));
+    return 0;
+}
+
+/* What every context does once its buffers are clear: the test hooks, the
+   statistics and GL's own state. */
+static void after_init(const DGLConfig *cp)
+{
+    const DGLConfig c = *cp;
     {
         const char *e = getenv("DGL_EXIT_AFTER");
         exit_after = e ? strtoul(e, NULL, 10) : 0;
@@ -282,20 +387,6 @@ int dglInit(const DGLConfig *cfg)
     dgl_buffers_reset();                /* buffer objects (buffer.c) go with the old context */
     dgl_gl_error_hook = log_gl_error;
     dgl_gl_set_window(c.width, c.height);
-    {
-        /* DGL_TEXHEAP_KB caps the texture heap (tests of eviction, or a
-         * smaller card's memory on a bigger one). */
-        const char *e = getenv("DGL_TEXHEAP_KB");
-        uint32_t end = dgl_ctx.vram_bytes, kb = e ? (uint32_t)strtoul(e, NULL, 10) : 0;
-        if (kb && dgl_ctx.heap_off + kb * 1024u < end)
-            end = dgl_ctx.heap_off + kb * 1024u;
-        dgl_textures_reset(dgl_ctx.heap_off, end);
-    }
-    dgl_emit_install();
-    DGL_INFO("DGL-INIT %dx%d pitch=%d double=%d depth=%d heap=%lu..%lu display=%dx%d fit=%s", c.width, c.height,
-             dgl_ctx.pitch_px, dgl_ctx.double_buffer, dgl_ctx.depth_bits, (unsigned long)dgl_ctx.heap_off,
-             (unsigned long)dgl_ctx.vram_bytes, pl->disp.width, pl->disp.height, mga_fit_name(pl->fit));
-    return 0;
 }
 
 void dglShutdown(void)
@@ -413,6 +504,7 @@ static void run_wait_hook(void)
 static void drain_with_hook(void)
 {
     PROF_SCOPE(PROF_D_DRAIN);
+    DGL_GPU_ENTER();
     if (wait_hook && mga_mmio) {
         uint32_t start = sys_time_us(), last = start, now;
         while (!engine_idle() && (now = sys_time_us()) - start < 200000u)
@@ -490,6 +582,20 @@ void dglSwapBuffers(void)
     if (exit_after && stats.swaps >= exit_after) {
         dglShutdown();
         exit(0);
+    }
+    if (dgl_glos.on) {
+        /* In a GLOS window: it shows the finished buffer from now on (the
+         * desktop puts it on the screen), and GL draws into the other. */
+        if (!dgl_ctx.double_buffer) {
+            dgl_glos_show(dgl_ctx.front_off);
+            return;
+        }
+        show = dgl_ctx.front_is_a ? dgl_ctx.back_off : dgl_ctx.front_off;
+        dgl_glos_show(show);
+        dgl_ctx.front_is_a = !dgl_ctx.front_is_a;
+        set_target();
+        dgl_gl.dirty |= DGL_DIRTY_TARGET | DGL_DIRTY_RASTER;
+        return;
     }
     if (dgl_ctx.scaled) {
         /* Scale the finished frame into the hidden display buffer, then

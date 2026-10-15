@@ -37,6 +37,14 @@ dglShutdown();
 - Games may leave the x87 FPU at 24-bit precision or change its rounding
   (Quake 2 does): drawing calls switch to their own control word and
   restore the caller's.
+- Under GLOS (`DGL_API_VERSION` 0x0104), on a desktop that can show GL
+  in a window, `dglInit` opens a window of the context's size instead of
+  setting a mode (any size the engine can draw; `dglEnumModes` lists the
+  usual ones that fit), and the program becomes a GLOS app: its buffers and
+  texture heap are VRAM GLOS gives it (`DGL_TEXHEAP_KB`, default up to
+  4 MB), and DOS-GL takes GLOS's GPU lock before each piece of work with the
+  engine. `DGL_FULLSCREEN=1` takes the screen instead (a GLOS session);
+  `dglGetGlosWindow()` gives the window's GLOS id; `DGL_TITLE` its title.
 - `dglSetWaitHook(fn, arg)` (0.3, `DGL_API_VERSION` 0x0103) runs `fn(arg)`
   about once a millisecond while `dglSwapBuffers` waits for the drawing
   engine to finish the frame, and once before it waits for the retrace

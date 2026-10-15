@@ -68,6 +68,7 @@ static void env_defaults(dgl_texenv *e)
 
 int dgl_sync(void)
 {
+    DGL_GPU_ENTER();
     if (engine_sync(500000) != 0)
         return -1;
     dgl_sync_epoch++;

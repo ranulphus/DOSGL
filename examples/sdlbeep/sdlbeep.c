@@ -21,14 +21,16 @@
 static int underruns = -1, chunks = 0;
 
 /* SDL's log to COM1, and the driver's underrun count from it (SDL patch
- * 0005: "SoundBlaster: U of N chunks underran ..." when the device closes). */
+ * 0005: "SoundBlaster: U of N chunks underran ..." when the device closes;
+ * under GLOS, patch 0009's "GLOS: U of N chunks underran ..."). */
 static void log_to_serial(void *u, int category, SDL_LogPriority priority, const char *msg)
 {
     (void)u;
     (void)category;
     (void)priority;
     hx_log("SDL %s", msg);
-    SDL_sscanf(msg, "SoundBlaster: %d of %d chunks underran", &underruns, &chunks);
+    if (SDL_sscanf(msg, "SoundBlaster: %d of %d chunks underran", &underruns, &chunks) != 2)
+        SDL_sscanf(msg, "GLOS: %d of %d chunks underran", &underruns, &chunks);
 }
 
 int main(int argc, char **argv)

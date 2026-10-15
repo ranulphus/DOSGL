@@ -313,6 +313,7 @@ static void validate(void)
 
 static int emit_begin(void)
 {
+    DGL_GPU_ENTER();
     validate();
     return !skip_all;
 }
@@ -626,6 +627,7 @@ static void clear(GLbitfield mask)
     int x0, y0, x1, y1;
     PROF_SCOPE(PROF_D_CLEAR);
     DGL_FPU_ENTER();
+    DGL_GPU_ENTER();
     scissor_rows(&x0, &y0, &x1, &y1);
     engine_set_clip(x0, y0, x1, y1);
     /* Clears are engine fills: no blending or fog; the colour mask applies. */
