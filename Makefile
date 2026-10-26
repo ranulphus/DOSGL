@@ -7,6 +7,7 @@
 #   make halflife / loopa-halflife MODE=play   Half-Life on Xash3D FWGS (tools/halflife)
 #   make doom / loopa-doom MODE=timedemo   PrBoom-plus on SDL3 and DOS-GL (tools/doom)
 #   make sdl / sdl-examples / loopa-sdl   SDL3 on DOS with DOS-GL (tools/sdl, docs/sdl.md)
+#   make conform-bench PC=bench-g400 [TESTS=...]   the conformance suite on a bench PC
 #   make sync-hal         refresh third_party/mgahal from MGA-Glide
 #   make check-hal        verify the vendored copy against its MANIFEST
 include config.mk
@@ -131,6 +132,10 @@ conform-host: $(foreach t,$(CONFORM),build/host/conform/$(t))
 conform: conform-dos dostools
 	$(MGAHAL)/tools/dev sh -c '$(MAKE) conform-host && python3 tools/conform/run.py --card $(CARD) \
 	  $(if $(PRE),--pre "$(PRE)") $(TESTS)'
+# The same on a bench PC (MGA-Glide's tools/bench/run.py, on the host: the PC must reach it).
+conform-bench: conform-dos
+	$(MGAHAL)/tools/dev sh -c '$(MAKE) conform-host && python3 tools/conform/run.py --refs $(TESTS)'
+	python3 tools/conform/run.py --bench $(PC) $(if $(PRE),--pre "$(PRE)") $(TESTS)
 
 # ClassiCube (M5): build against libGL.a, and run it in 86Box with the
 # procedural test texture pack (tools/classicube/mkpack.py): singleplayer,

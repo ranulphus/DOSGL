@@ -239,3 +239,75 @@ to this document. Turn each FAIL into three things:
 - a new `g4exp.py loopa` baseline.
 
 Record each answer in MGA-Glide's `docs/g400-dual-texture.md` §7 as well.
+
+## Results
+
+### bench-g400: a G400 (2026-10-26)
+
+The card: an AGP G400 16 MB (`102B:0525` revision 05, subsystem `0338102B`, VBE 2.0 BIOS) in an IBM PC 300PL
+(Pentium II, 440BX) under GLOS on MS-DOS 7.1. DOS-GL main 6fd0969; the job is MGA-Glide's
+`out/bench/bench-g400/g4exp-1793037525`.
+
+E7 reads OPTION `50040120`, the value 86Box gives. It also reads OPTION2 `01003000` and OPTION3 `0190A419`;
+86Box models neither.
+
+```
+                 D     C     T     L     S     P
+e1a-routing      PASS  PASS  PASS  -     -     -
+e1b-coords       PASS  PASS  PASS  -     -     -
+e1c-coords32     PASS  PASS  PASS  -     -     -
+e2-modulate      PASS  PASS  PASS  -     -     -
+e4-leave-dual    PASS  PASS  PASS  -     -     -
+e5-palette       PASS  -     PASS  FAIL  PASS  -
+e6-texcache      FAIL  FAIL  FAIL  -     -     FAIL
+E3 bit 15: 6 pictures identical to D, differ: E6
+```
+
+- **E1.** All three pass under D, C and T. The map-1 bit takes effect on the next write, as `trap.c` assumes.
+- **E2.** D and C both say "modulated", so the legacy lighting module works beside the combiner on revision 05.
+  Keep the legacy path.
+- **E3.** Bit 15 changes nothing in E1, E2, E4 or E5. It does change E6's picture: the stale texels (below) end
+  in a ragged edge instead of a straight one. So the bit affects how the texture cache fills, not the colours.
+  DOS-GL leaves it off.
+- **E4.** Every cell is right, with no sync. Rewriting TEXCTL2 is enough to leave dual texturing.
+- **E5.**
+  - L (the LUT on the G400) draws every sample black, with fine vertical lines where the stripes are. The
+    G200's load recipe doesn't give the G400 a working LUT, so DOS-GL keeps expanding paletted textures on the
+    G400 (its default). S passes.
+- **E6.** Every switch fails the same way: a=129, b=10, c=0 stale samples. Engine writes and CPU writes are
+  equally affected.
+  - E6D.PPM shows that step a's stale texels are 8-pixel blocks of the old red along the quad's diagonal.
+  - Step b leaves half of the 8x8 corner unchanged.
+  - Step c, where another texture was drawn and TEXORG rewritten, is clean.
+  - So the chip caches texels across writes to texture memory, and rewriting the texture registers clears the
+    cache. A follow-up job (`e6flush-1793037995`, an experimental `DGL_TEXFLUSH` switch on branch
+    `silicon-g400`) narrowed it down:
+
+    | DGL_TEXFLUSH | After an in-place write | Engine (D) | CPU (P) |
+    |---|---|---|---|
+    | 0 | nothing (6fd0969) | a=129 b=10 c=0 | a=129 b=10 c=0 |
+    | 1 | the texture state re-emitted at the next draw (TEXORG rewritten with the same value) | clean | clean |
+    | 2 | as 1, with TEXORG first written once with another value | clean | clean |
+
+    Re-emitting the state is enough. **Change:** after a `sub_in_place` write, set `DGL_DIRTY_TEXTURE`. That
+    costs one texture-state emit per `glTexSubImage2D`.
+    - 86Box has no texture cache, so it can't show the bug.
+    - The G200 is untested, but the change is cheap enough to make on every card.
+- **E8** (run by hand under D and P) passes: a queued ILOAD followed by a `glTexImage2D` gives blue.
+
+DOS-GL's conformance suite on the same card (`make conform-bench PC=bench-g400`, 2026-10-26) passes 23 of 27;
+86Box's G400 passes 27 of 27. Two causes:
+
+- **t18** (`glTexSubImage2D` between draws) is E6. It passes under `DGL_TEXFLUSH=1`.
+- **t07, t20, t25** (bilinear filtering) come out exactly half a texel off Mesa in s and t. On t07's magnified
+  8x8 texture the silicon equals Mesa moved by (-14, +12) pixels, half of a 28x23-pixel texel.
+  - The HAL's `adjust()` (`hal/src/texhw.c`) subtracts half a texel for bilinear filtering. That is GL's
+    texel-centre rule on a chip that would filter from texel corners, as 86Box models the G200 and G400.
+  - The G400 already samples at texel centres. With the shift off (experimental switch `DGL_TEXCENTRE=1`),
+    t07, t20 and t25 match Mesa with no pixel beyond tolerance.
+  - **Change:** no half-texel shift on the G400 and G450, in the HAL's caps.
+  - 86Box patch 0009 should model texel-centre sampling on those cards.
+  - The G200 is unmeasured (the G200eR2 runs compared DOS-GL with itself), so it keeps the shift until a rig
+    run on the G200eR2 says otherwise.
+
+With both changes, the four tests pass on the card, every frame within tolerance (worst fraction 0).
