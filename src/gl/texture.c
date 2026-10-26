@@ -788,6 +788,12 @@ void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsi
         dgl_texc.sub_full++;
         t->dirty = 1;
         dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
+    } else if (w && h) {
+        /* Written in place: the G400's texture cache keeps the texels it
+         * read before (engine or CPU writes alike) until the texture
+         * registers are written again, so the next draw re-emits them
+         * (bench-g400, G4EXP E6; docs/silicon-experiments.md). */
+        dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
     }
 }
 

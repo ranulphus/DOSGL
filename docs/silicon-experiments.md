@@ -311,3 +311,18 @@ DOS-GL's conformance suite on the same card (`make conform-bench PC=bench-g400`,
     run on the G200eR2 says otherwise.
 
 With both changes, the four tests pass on the card, every frame within tolerance (worst fraction 0).
+
+**Changed since (2026-10-26):**
+- **The texture cache:** `glTexSubImage2D` sets `DGL_DIRTY_TEXTURE` after every in-place write (`src/gl/texture.c`),
+  on every card. The next draw rewrites the texture registers, TEXORG included, and that empties the cache.
+- **Texel centres and the LUT:** the HAL has `mga.texel_centre` on the G400 family and no half-texel shift there.
+  The G400 family also no longer has `has_tlut`, so `DGL_TLUT=1` expands too.
+- **The DAC:** `dac_set_ramp` writes the BIOS's layout. All of these come from MGA-Glide branch `g400-silicon`.
+- **86Box:**
+  - patch 0003 is dropped;
+  - 0119 fixes FIFOSTATUS's status byte;
+  - 0120 filters around texel centres on the G400 family;
+  - 0121 models its texture cache, sized to catch any missing flush. DOS-GL 6fd0969's G4EXP fails E6 there
+    (a=1024 b=1024 c=0), as on the card, and this library passes.
+- **On the card with these changes:** conformance passes 27 of 27, and G4EXP passes everything but E5 under L.
+  That job was built before `has_tlut` changed; the G4EXP baselines are rerun below.
