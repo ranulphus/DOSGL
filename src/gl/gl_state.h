@@ -136,6 +136,7 @@ extern void (*dgl_gl_error_hook)(GLenum e, void *caller); /* context.c logs the 
 typedef struct {
     unsigned long begins, skipped;              /* primitives; skipped by validation */
     unsigned long tris_in, clipped, zero_area, culled;
+    unsigned long seqs;                         /* fans and strips sent as one sequence of the WARPs' */
 } dgl_prim_counts;
 extern dgl_prim_counts dgl_prims;
 

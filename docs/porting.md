@@ -94,8 +94,11 @@ dglShutdown();
   - `DGL_AGP=0` keeps the DMA rings cached and fetched by PCI under GLOS too, which otherwise makes them
     write-combining (API 1.4) and turns AGP on. `DGL_RING=bytes` (256 KB) and `DGL_KICK=bytes` (6 KB of
     vertices between kicks) tune the rings.
-  - `DGL_FAST=0` turns off the fast path: triangles from vertex arrays straight to the WARP (no fog, texture
-    matrix, polygon offset or second map), each vertex transformed and projected once.
+  - `DGL_FAST=0` turns off the fast path: triangles from vertex arrays, immediate mode and display lists straight
+    to the WARP (no fog, texture matrix, polygon offset or second map), each vertex transformed and projected once.
+    On it, a fan, polygon or strip of 5 to 64 vertices goes as one sequence of the WARPs' (each vertex once in the
+    DMA stream) when all of its triangles would be drawn; `DGL_SEQ=0` sends triangles instead (1 fans and polygons,
+    2 strips, 4 flat polygons; 7 by default). `DGL-PRIMS ... seqs=` counts them.
   - `DGL_TEXHEAP_KB=n` caps the texture heap (to test eviction, or to
     behave like a card with less memory).
   - `DGL_SNAP=100,250` writes the frames shown by those swaps to
