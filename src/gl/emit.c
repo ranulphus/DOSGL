@@ -167,7 +167,7 @@ static uint32_t stage_word(int stage, int unit, const dgl_texture *t)
     return w;
 }
 
-static void validate(void)
+static void validate_state(void)
 {
     int depth = dgl_gl.depth_test && dgl_ctx.z_off;
     uint32_t alphactrl, zmode = depth ? zmode_for(dgl_gl.depth_func) : DWG_ZMODE_NOZCMP, asel;
@@ -339,6 +339,21 @@ static void validate(void)
     }
 }
 
+#define DGL_DIRTY_REGS (DGL_DIRTY_RASTER | DGL_DIRTY_FOG | DGL_DIRTY_TARGET | DGL_DIRTY_TEXTURE)
+
+/* A soft reset while validating (the WARP's microcode loads take one, and
+ * so does a WARP that fails) clears the drawing registers: everything is
+ * written again. The second pass finds the pipe running. */
+static void validate(void)
+{
+    uint32_t resets = engine_resets;
+    validate_state();
+    if (engine_resets != resets) {
+        dgl_gl.dirty |= DGL_DIRTY_REGS;
+        validate_state();
+    }
+}
+
 static int emit_begin(void)
 {
     DGL_GPU_ENTER();
@@ -458,7 +473,7 @@ static void draw_projected(const proj *p0, const proj *p1, const proj *p2, const
         }
         warp_on = warp_now = 0;                 /* the FIFO stopped draining: the CPU from now on */
         DGL_WARN("DGL-WARN the WARP stopped taking vertices: triangles are set up by the CPU");
-        dgl_gl.dirty |= DGL_DIRTY_RASTER;
+        dgl_gl.dirty |= DGL_DIRTY_REGS;         /* (the engine was reset) */
     }
     if (warp_since_cpu) {
         setup_invalidate();                     /* the WARP wrote the registers setup_triangle shadows */
