@@ -767,6 +767,7 @@ typedef struct { GLint key; unsigned gen, oc; int32_t X16, Y16; mga_wvtx w; } fa
 static fast_vtx fv[FAST_SLOTS];
 static unsigned fgen;
 static const float *fm;                 /* the MVP matrix */
+static const float *fmv;                /* the modelview matrix, for fog's eye distance */
 static uint32_t fbgra;                  /* the current colour, without a colour array */
 static float fs0, ft0;                  /* the current texture coordinates, without an array */
 
@@ -806,8 +807,15 @@ static const fast_vtx *fast_get(GLint i)
                     ((uint32_t)(dgl_pl_c.size > 3 ? c[3] : 255) << 24);
     } else
         f->w.bgra = fbgra;
-    f->w.spec = 0xFF000000u;            /* (no fog: its factor 255) */
-    if (dgl_pl_t.on) {
+    if (dgl_gl.fog) {                   /* project()'s factor from dgl_transform's eye distance */
+        const float *mv = fmv;
+        float d = -(mv[2] * p[0] + mv[6] * p[1] + mv[10] * p[2] + mv[14] * p3);
+        f->w.spec = byte_of(255.0f * fog_factor(d)) << 24;
+    } else
+        f->w.spec = 0xFF000000u;        /* (no fog: its factor 255) */
+    if (textured == 2) {                /* the white texel of untextured fogged draws */
+        f->w.u0 = f->w.v0 = 0;
+    } else if (dgl_pl_t.on) {
         const float *t = (const float *)(dgl_pl_t.p + (size_t)i * dgl_pl_t.stride);
         f->w.u0 = t[0] * tex_scale_s;
         f->w.v0 = t[1] * tex_scale_t;
@@ -817,6 +825,23 @@ static const fast_vtx *fast_get(GLint i)
     }
     f->w.u1 = f->w.v1 = 0;
     return f;
+}
+
+/* warp_wrap on three vertices already in the DMA stream: f[idx] of each
+ * (dw floats apart) shifted by whole periods so the smallest is in [0, 1). */
+static void wrap_dw(float *f, int dw, int idx)
+{
+    float mn = f[idx];
+    if (f[idx + dw] < mn) mn = f[idx + dw];
+    if (f[idx + 2 * dw] < mn) mn = f[idx + 2 * dw];
+    if (!(mn > -1e9f && mn < 1e9f))
+        return;
+    mn = (float)mga_ifloor(mn);
+    if (mn != 0) {
+        f[idx] -= mn;
+        f[idx + dw] -= mn;
+        f[idx + 2 * dw] -= mn;
+    }
 }
 
 static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
@@ -841,6 +866,40 @@ static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
             return;
         }
     }
+    if (dgl_gl.fog) {
+        /* fog_split's test: a large triangle over which the factor varies
+         * much goes the general way, to be subdivided (area2 is in 1/256
+         * square pixels, doubled). */
+        uint32_t fa = a->w.spec >> 24, fb = b->w.spec >> 24, fc = c->w.spec >> 24;
+        uint32_t lo = fa < fb ? fa : fb, hi = fa > fb ? fa : fb;
+        if (fc < lo) lo = fc;
+        if (fc > hi) hi = fc;
+        if (hi - lo > FOG_SPLIT && (area2 < 0 ? -area2 : area2) >= 32 * 512) {
+            dgl_prims.tris_in--;
+            dgl_tri_general(ia, ib, ic, ip);
+            return;
+        }
+    }
+    {
+        int dw;
+        uint32_t *d = warp_reserve(3, &dw);
+        if (d) {                                /* straight into the DMA stream */
+            memcpy(d, &a->w, (size_t)dw * 4u);
+            memcpy(d + dw, &b->w, (size_t)dw * 4u);
+            memcpy(d + 2 * dw, &c->w, (size_t)dw * 4u);
+            if (dgl_gl.shade_model == GL_FLAT)
+                d[4] = d[4 + dw] = d[4 + 2 * dw] = fast_get(ip)->w.bgra;
+            if (textured == 1) {
+                if (!tstate.clamp_u)
+                    wrap_dw((float *)d, dw, 6);
+                if (!tstate.clamp_v)
+                    wrap_dw((float *)d, dw, 7);
+            }
+            warp_commit(3);
+            warp_since_cpu = 1;
+            return;
+        }
+    }
     w[0] = a->w; w[1] = b->w; w[2] = c->w;
     if (dgl_gl.shade_model == GL_FLAT)
         w[0].bgra = w[1].bgra = w[2].bgra = fast_get(ip)->w.bgra;
@@ -860,7 +919,7 @@ static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
 static int emit_fast(GLenum mode, GLsizei count, const GLint *idx, GLint first)
 {
     GLsizei i;
-    if (!warp_now || dgl_gl.fog || !dgl_gl.tex_identity || dual || map0_unit || textured == 2 ||
+    if (!warp_now || !dgl_gl.tex_identity || dual || map0_unit ||
         (dgl_gl.offset_fill && (dgl_gl.offset_factor != 0.0f || dgl_gl.offset_units != 0.0f)) ||
         dgl_pl_v.type != GL_FLOAT || dgl_pl_v.size < 3 ||
         (dgl_pl_c.on && dgl_pl_c.type != GL_UNSIGNED_BYTE) || (dgl_pl_c.on && dgl_pl_c.size < 3) ||
@@ -878,6 +937,7 @@ static int emit_fast(GLenum mode, GLsizei count, const GLint *idx, GLint first)
         fgen = 1;
     }
     fm = dgl_mvp()->m;
+    fmv = dgl_gl.mv.stack[dgl_gl.mv.depth - 1].m;
     fbgra = byte_of(dgl_gl.cur_color[2] * 255.0f) | (byte_of(dgl_gl.cur_color[1] * 255.0f) << 8) |
             (byte_of(dgl_gl.cur_color[0] * 255.0f) << 16) | (byte_of(dgl_gl.cur_color[3] * 255.0f) << 24);
     fs0 = dgl_gl.cur_tex[0] * tex_scale_s;
