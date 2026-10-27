@@ -46,9 +46,10 @@ static float guard_px = 2000.0f;
 static int skip_all;                  /* depth or alpha function NEVER, or no context */
 static float tri_offset;              /* glPolygonOffset for the triangle being drawn (depth steps) */
 static float guard_x, guard_y;
-/* DGL_WARP=1 (G400): triangles set up by the chip's WARP engine from the
+/* The G400 family: triangles set up by the chip's WARP engine from the
  * projected vertices instead of by setup_triangle (MGA-Glide
- * docs/g400-warp.md). Off by default until the bench has checked it. */
+ * docs/g400-warp.md), unless DGL_WARP=0. Lines and points, and any
+ * triangle after the WARP fails, go through setup_triangle. */
 static int warp_on;                   /* asked for, on a chip with a WARP */
 static int warp_now;                  /* the current state draws through the WARP */
 static int warp_since_cpu;            /* WARP triangles since setup_triangle's last: its shadows are stale */
@@ -422,24 +423,50 @@ static void clamp_colour(mga_svtx *v)
 /* A WARP vertex from a projected one and its setup values (colours clamped,
  * depth offset, texture coordinates adjusted): Mesa's mga vertex, with its
  * subpixel offset from the window coordinates the CPU setup rounds. */
+/* (int)(f + 0.5) for f in 0..255, without a cast: the cast wraps its FISTP
+ * in two FLDCWs, which cost 59 cycles a conversion on the bench's Pentium
+ * II (DGL-MICRO), 24 a triangle here. */
 static uint32_t byte_of(float f)
 {
-    return (uint32_t)(f <= 0 ? 0 : f >= 255.0f ? 255 : (int)(f + 0.5f));
+    return f <= 0 ? 0 : f >= 255.0f ? 255 : (uint32_t)mga_ifloor((double)f + 0.5);
 }
 
 static void to_wvtx(const proj *p, const mga_svtx *v, mga_wvtx *w)
 {
-    const float q = v->q > 0 ? v->q : 1e-9f;
+    const float rq = 1.0f / (v->q > 0 ? v->q : 1e-9f);   /* one divide, not four */
     w->x = (float)p->x + WARP_SUBPIXEL_X;
     w->y = (float)p->y + WARP_SUBPIXEL_Y;
     w->z = (float)(v->z * (1.0 / 65535.0));
     w->rhw = v->q;
     w->bgra = byte_of(v->b) | (byte_of(v->g) << 8) | (byte_of(v->r) << 16) | (byte_of(v->a) << 24);
     w->spec = byte_of(v->sb) | (byte_of(v->sg) << 8) | (byte_of(v->sr) << 16) | (byte_of(v->fog) << 24);
-    w->u0 = v->s / q;
-    w->v0 = v->t / q;
-    w->u1 = v->s1 / q;
-    w->v1 = v->t1 / q;
+    w->u0 = v->s * rq;
+    w->v0 = v->t * rq;
+    w->u1 = v->s1 * rq;
+    w->v1 = v->t1 * rq;
+}
+
+/* tex_adjust_coords for the WARP, in its divided coordinates: whole periods
+ * off each repeating axis so the smallest lies in [0, 1), without the six
+ * divides (the WARP's chips sample at texel centres: no half-texel shift). */
+static void warp_wrap(mga_wvtx *w, int map1, const mga_texstate *t)
+{
+    int axis, i;
+    for (axis = 0; axis < 2; axis++) {
+        float mn;
+        if (axis ? t->clamp_v : t->clamp_u)
+            continue;
+#define U(k) (*(axis ? (map1 ? &w[k].v1 : &w[k].v0) : (map1 ? &w[k].u1 : &w[k].u0)))
+        mn = U(0);
+        if (U(1) < mn) mn = U(1);
+        if (U(2) < mn) mn = U(2);
+        if (!(mn > -1e9f && mn < 1e9f))
+            continue;                   /* (mga_ifloor's range; NaN too) */
+        mn = (float)mga_ifloor(mn);
+        for (i = 0; i < 3; i++)
+            U(i) -= mn;
+#undef U
+    }
 }
 
 /* flat: the provoking vertex when its colour is to replace the projected
@@ -458,15 +485,15 @@ static void draw_projected(const proj *p0, const proj *p1, const proj *p2, const
         OFS(a); OFS(b); OFS(c);
 #undef OFS
     }
-    if (textured)
-        tex_adjust_coords(&a, &b, &c, &tstate);
-    if (dual)
-        tex_adjust_coords1(&a, &b, &c, &tstate1);
     if (warp_now) {
         mga_wvtx w[3];
         to_wvtx(p0, &a, &w[0]);
         to_wvtx(p1, &b, &w[1]);
         to_wvtx(p2, &c, &w[2]);
+        if (textured)
+            warp_wrap(w, 0, &tstate);
+        if (dual)
+            warp_wrap(w, 1, &tstate1);
         if (warp_vertices(w, 3) == 0) {
             warp_since_cpu = 1;
             return;
@@ -475,6 +502,10 @@ static void draw_projected(const proj *p0, const proj *p1, const proj *p2, const
         DGL_WARN("DGL-WARN the WARP stopped taking vertices: triangles are set up by the CPU");
         dgl_gl.dirty |= DGL_DIRTY_REGS;         /* (the engine was reset) */
     }
+    if (textured)
+        tex_adjust_coords(&a, &b, &c, &tstate);
+    if (dual)
+        tex_adjust_coords1(&a, &b, &c, &tstate1);
     if (warp_since_cpu) {
         setup_invalidate();                     /* the WARP wrote the registers setup_triangle shadows */
         warp_since_cpu = 0;
@@ -692,7 +723,7 @@ static void emit_end(void) { }
 void dgl_emit_install(void)
 {
     const char *e = getenv("DGL_WARP");
-    warp_on = e && *e == '1' && warp_available();
+    warp_on = !(e && *e == '0') && warp_available();
     warp_now = warp_since_cpu = 0;
     e = getenv("DGL_COMBINER");
     force_combiner = e && *e && *e != '0';

@@ -131,7 +131,74 @@ void dgl_transform(const dgl_vin *in, dgl_cvtx *o)
 
 void dgl_fetch_vertex(GLint i, dgl_vin *v);
 
-static void fetch(GLint i, dgl_vin *v) { dgl_fetch_vertex(i, v); }
+/* The arrays resolved once a draw (assemble): each one's first element and
+ * stride, so a vertex is fetched without dgl_buffer_address, type_size and a
+ * type switch for every component. The values are read_comps's. */
+typedef struct { const unsigned char *p; size_t stride; GLenum type; int size, on; } aplan;
+static aplan pl_v, pl_c, pl_t, pl_t1;
+
+static void plan_one(const dgl_array *a, int on, aplan *o)
+{
+    o->on = on;
+    if (!on)
+        return;
+    o->p = (const unsigned char *)dgl_buffer_address(a->buf, a->ptr);
+    o->stride = a->stride ? (size_t)a->stride : (size_t)(a->size * type_size(a->type));
+    o->type = a->type;
+    o->size = a->size;
+}
+
+static void plan_arrays(void)
+{
+    plan_one(&dgl_gl.va, 1, &pl_v);
+    plan_one(&dgl_gl.ca, dgl_gl.ca.enabled, &pl_c);
+    plan_one(&dgl_gl.ta, dgl_gl.ta.enabled, &pl_t);
+    plan_one(&dgl_gl.ta1, dgl_gl.ta1.enabled, &pl_t1);
+}
+
+static void read_plan(const aplan *a, GLint i, float *out, int n, int normalise)
+{
+    const unsigned char *p = a->p + (size_t)i * a->stride;
+    int k, m = n < a->size ? n : a->size;
+    switch (a->type) {
+    case GL_FLOAT:
+        for (k = 0; k < m; k++) out[k] = ((const float *)p)[k];
+        break;
+    case GL_DOUBLE:
+        for (k = 0; k < m; k++) out[k] = (float)((const double *)p)[k];
+        break;
+    case GL_SHORT:
+        for (k = 0; k < m; k++) out[k] = ((const short *)p)[k];
+        break;
+    case GL_INT:
+        for (k = 0; k < m; k++) out[k] = (float)((const int *)p)[k];
+        break;
+    case GL_UNSIGNED_BYTE:
+        for (k = 0; k < m; k++) out[k] = normalise ? p[k] / 255.0f : p[k];
+        break;
+    }
+}
+
+static void fetch(GLint i, dgl_vin *v)
+{
+    v->pos[0] = v->pos[1] = v->pos[2] = 0; v->pos[3] = 1;
+    read_plan(&pl_v, i, v->pos, 4, 0);
+    if (pl_c.on) {
+        v->col[3] = 1;
+        read_plan(&pl_c, i, v->col, 4, 1);
+    } else
+        memcpy(v->col, dgl_gl.cur_color, sizeof v->col);
+    if (pl_t.on) {
+        v->tex[0] = v->tex[1] = 0;
+        read_plan(&pl_t, i, v->tex, 2, 0);
+    } else
+        memcpy(v->tex, dgl_gl.cur_tex, sizeof v->tex);
+    if (pl_t1.on) {
+        v->tex1[0] = v->tex1[1] = 0;
+        read_plan(&pl_t1, i, v->tex1, 2, 0);
+    } else
+        memcpy(v->tex1, dgl_gl.cur_tex1, sizeof v->tex1);
+}
 
 void dgl_fetch_vertex(GLint i, dgl_vin *v)
 {
@@ -232,6 +299,8 @@ static void assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, 
             return;
         }
     }
+    if (!imm)
+        plan_arrays();
     switch (mode) {
     case GL_TRIANGLES:
         for (i = 0; i + 2 < count; i += 3)
