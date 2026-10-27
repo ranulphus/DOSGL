@@ -325,4 +325,9 @@ With both changes, the four tests pass on the card, every frame within tolerance
   - 0121 models its texture cache, sized to catch any missing flush. DOS-GL 6fd0969's G4EXP fails E6 there
     (a=1024 b=1024 c=0), as on the card, and this library passes.
 - **On the card with these changes:** conformance passes 27 of 27, and G4EXP passes everything but E5 under L.
-  That job was built before `has_tlut` changed; the G4EXP baselines are rerun below.
+  That job was built before `has_tlut` changed.
+- **Emulator baseline (2026-10-27, 86Box with 0119-0121, MGA-Glide c45ac7f):** every experiment passes under every
+  switch on the G450, G400 and G200.
+  - The G400 family reports `tlut=0`, and run L expands as D does.
+  - E6 runs through 0121's cache model, which fails DOS-GL 6fd0969 as the card did.
+  - E3: 7 pictures identical to D on the G400 family, 3 on the G200.
