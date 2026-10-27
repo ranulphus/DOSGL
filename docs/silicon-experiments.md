@@ -229,6 +229,23 @@ space 00h-5Ch. That covers OPTION (40h), and on the G400 OPTION2 (50h) and
 OPTION3 (54h). The specification's "Rev A" notes (the E2 question) name no
 PCI revision, so E7 records every card's values next to its E2 outcome.
 
+### E9: texture coordinates, CPU setup against the WARP (G400/G450)
+
+`examples/texexp` (`TEXEXP.EXE`) draws sixteen cases a part, one in each 160x120 cell. Each case varies one
+property of the texture or its coordinates:
+- **Part 1:** flat and in perspective; repeat and clamp; nearest, bilinear and mipmapped; one block of a
+  128x128 lightmap-style atlas; sizes from 8 to 256; coordinates 100 periods out.
+- **Part 2:** the same triangles placed inside their cell and across its clip (left, right, both, the screen's
+  edge, far into the guard band).
+
+`tools/silicon/texexp.py bench --pc NAME` runs both parts with `DGL_WARP=0` (tag C) and `DGL_WARP=1` (tag W).
+`texexp.py report DIR [REF]` gives each cell's share of pixels more than 32 apart: C against W, and each against
+a reference such as 86Box's run (`texexp.py loopa`).
+
+Two readings:
+- The WARP's frames should match 86Box's, which match Mesa's.
+- The CPU setup's frames should match them too, where 86Box models the same registers.
+
 ## Recording results
 
 For each card, add a row with the date, card, revision and the report's table
@@ -326,3 +343,39 @@ With both changes, the four tests pass on the card, every frame within tolerance
     (a=1024 b=1024 c=0), as on the card, and this library passes.
 - **On the card with these changes:** conformance passes 27 of 27, and G4EXP passes everything but E5 under L.
   That job was built before `has_tlut` changed; the G4EXP baselines are rerun below.
+
+**E9 and the WARP (2026-10-27).** DOSBench's Arena on the card, through the CPU setup, drew bilinear lightmaps
+dark, black or too bright by whole faces, and some walls displaced: 6-38% of its pixels differ from 86Box's.
+Through the WARP it matched exactly. E9 found two faults, both fixed in the HAL:
+
+- **The WARP and the clip.** When the scissor changed between quads, the WARP drew only one triangle of each:
+  the second WARP's triangle was cut by the next clip. Linux's mga DRM writes DWGCTL and a zero-length draw
+  twice before every clip on a G400 (`mga_emit_clip_rect`). `emit_clip` now does the same while WARP triangles
+  are pending (MGA-Glide 3bdd96d). Every flat cell then matches 86Box.
+- **The CPU setup in perspective.** TEXWIDTH/TEXHEIGHT's `rfw` was `8 - log2(size) - k`, k being the setup's
+  prescale of s and q (the specification's formula, counting the extra q fraction bits). On the card that
+  displaced the texels of prescaled triangles in perspective. The perspective lightmap block differed from
+  86Box in 1-3% of its pixels wherever it was placed, clip or not.
+  - With `rfw = 8 - log2(size)` every cell matches 86Box (which ignores `rfw`) and the WARP.
+  - Capping the prescale instead changed nothing, and `rfw` 2 higher nearly matched.
+  - The Arena's frames now match 86Box's exactly through the CPU setup too (MGA-Glide 0407e76).
+
+What's left differs only through the WARP, by its own arithmetic. Minified floors at 32 repeats (nearest, so
+moiré) differ from 86Box's and the CPU setup's in 4-27% of their pixels, and the 256x256 grid by one texel row
+(4%). Its `rfw` makes no difference (bases 2, 5 and 8 drew identically), and conformance and the Arena are
+within tolerance.
+
+| Part 1 cell   | C vs W | C vs 86Box | W vs 86Box |   | Part 2 cell | C vs W | C vs 86Box | W vs 86Box |
+|---------------|-------:|-----------:|-----------:|---|-------------|-------:|-----------:|-----------:|
+| flat (4)      | 0      | 0          | 0          |   | atlas (4)   | 0      | 0          | 0          |
+| floor x4      | 0.087  | 0          | 0.087      |   | grid in     | 0.042  | 0          | 0.042      |
+| floor x32     | 0.225  | 0.001      | 0.223      |   | grid L/R/LR | 0.06-0.09 | 0       | 0.06-0.09  |
+| floor mip     | 0.126  | 0.020      | 0.163      |   | flat (4)    | 0      | 0          | 0          |
+| floor bilin   | 0.267  | 0          | 0.265      |   | walls (4)   | 0.006-0.015 | 0-0.006 | 0.007-0.015 |
+| atlas (2)     | 0      | 0          | 0          |   |             |        |            |            |
+| 16, 8, 32x8   | 0      | 0          | 0          |   |             |        |            |            |
+| 256           | 0.043  | 0          | 0.043      |   |             |        |            |            |
+| edge-on, huge | 0.010  | 0-0.002    | 0.010      |   |             |        |            |            |
+
+Before the `rfw` fix, the CPU column against 86Box read 0.019-0.032 on the perspective atlas and 0.083 on the
+256 grid.
