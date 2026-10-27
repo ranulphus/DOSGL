@@ -754,7 +754,8 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
 }
 
 /* ---- The fast path: vertex arrays straight to the WARP (S1) ---------------
- * A draw of triangles from vertex arrays, while the WARP draws the state and
+ * A draw of triangles from vertex arrays (or immediate mode's vertices,
+ * planned as arrays at glEnd: vertex.c), while the WARP draws the state and
  * there is no fog, texture matrix, polygon offset, second map or remapped
  * unit: each vertex is fetched, transformed, given its outcode and projected
  * straight into its WARP form once (a direct-mapped cache by index), and a
@@ -791,7 +792,13 @@ static const fast_vtx *fast_get(GLint i)
     w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15] * p3;
     f->oc = (z + w < 0) | ((w - z < 0) << 1) | ((x + guard_x * w < 0) << 2) | ((guard_x * w - x < 0) << 3) |
             ((y + guard_y * w < 0) << 4) | ((guard_y * w - y < 0) << 5);
-    if (dgl_pl_c.on) {
+    if (dgl_pl_c.on && dgl_pl_c.type == GL_FLOAT) {
+        /* project()'s products, stored as floats, then warp_form's bytes */
+        const float *c = (const float *)(dgl_pl_c.p + (size_t)i * dgl_pl_c.stride);
+        volatile float r = c[0] * 255.0f, g = c[1] * 255.0f, b = c[2] * 255.0f,
+                       a = (dgl_pl_c.size > 3 ? c[3] : 1.0f) * 255.0f;
+        f->w.bgra = byte_of(b) | (byte_of(g) << 8) | (byte_of(r) << 16) | (byte_of(a) << 24);
+    } else if (dgl_pl_c.on) {
         const unsigned char *c = dgl_pl_c.p + (size_t)i * dgl_pl_c.stride;
         f->w.bgra = (uint32_t)c[2] | ((uint32_t)c[1] << 8) | ((uint32_t)c[0] << 16) |
                     ((uint32_t)(dgl_pl_c.size > 3 ? c[3] : 255) << 24);
@@ -973,7 +980,8 @@ static int emit_fast(GLenum mode, GLsizei count, const GLint *idx, GLint first)
     if (!warp_now || !dgl_gl.tex_identity || dual || map0_unit ||
         (dgl_gl.offset_fill && (dgl_gl.offset_factor != 0.0f || dgl_gl.offset_units != 0.0f)) ||
         dgl_pl_v.type != GL_FLOAT || dgl_pl_v.size < 3 ||
-        (dgl_pl_c.on && dgl_pl_c.type != GL_UNSIGNED_BYTE) || (dgl_pl_c.on && dgl_pl_c.size < 3) ||
+        (dgl_pl_c.on && dgl_pl_c.type != GL_UNSIGNED_BYTE && dgl_pl_c.type != GL_FLOAT) ||
+        (dgl_pl_c.on && dgl_pl_c.size < 3) ||
         (dgl_pl_t.on && (dgl_pl_t.type != GL_FLOAT || dgl_pl_t.size < 2)))
         return 0;
     switch (mode) {

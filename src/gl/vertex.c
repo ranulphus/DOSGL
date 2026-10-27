@@ -80,6 +80,12 @@ static int type_size(GLenum t)
     }
 }
 
+#define UBF1(i) ((float)(i) / 255.0f)
+#define UBF4(i) UBF1(i), UBF1((i) + 1), UBF1((i) + 2), UBF1((i) + 3)
+#define UBF16(i) UBF4(i), UBF4((i) + 4), UBF4((i) + 8), UBF4((i) + 12)
+#define UBF64(i) UBF16(i), UBF16((i) + 16), UBF16((i) + 32), UBF16((i) + 48)
+const float dgl_ub_f[256] = { UBF64(0), UBF64(64), UBF64(128), UBF64(192) };
+
 static void read_comps(const dgl_array *a, GLint i, float *out, int n, int normalise)
 {
     const unsigned char *p = (const unsigned char *)dgl_buffer_address(a->buf, a->ptr) +
@@ -91,7 +97,7 @@ static void read_comps(const dgl_array *a, GLint i, float *out, int n, int norma
         case GL_DOUBLE: out[k] = (float)((const double *)p)[k]; break;
         case GL_SHORT: out[k] = ((const short *)p)[k]; break;
         case GL_INT: out[k] = (float)((const int *)p)[k]; break;
-        case GL_UNSIGNED_BYTE: out[k] = normalise ? p[k] / 255.0f : p[k]; break;
+        case GL_UNSIGNED_BYTE: out[k] = normalise ? DGL_UB(p[k]) : p[k]; break;
         }
     }
 }
@@ -152,6 +158,17 @@ static void plan_one(const dgl_array *a, int on, aplan *o)
     o->size = a->size;
 }
 
+/* Immediate mode's vertices (glEnd) as arrays, for the fast path: the
+ * values fetch() would read from them are these. */
+static void plan_imm(const dgl_vin *v)
+{
+    pl_v.p = (const unsigned char *)v->pos; pl_v.stride = sizeof *v; pl_v.type = GL_FLOAT; pl_v.size = 4; pl_v.on = 1;
+    pl_c.p = (const unsigned char *)v->col; pl_c.stride = sizeof *v; pl_c.type = GL_FLOAT; pl_c.size = 4; pl_c.on = 1;
+    pl_t.p = (const unsigned char *)v->tex; pl_t.stride = sizeof *v; pl_t.type = GL_FLOAT; pl_t.size = 2; pl_t.on = 1;
+    pl_t1.p = (const unsigned char *)v->tex1; pl_t1.stride = sizeof *v; pl_t1.type = GL_FLOAT; pl_t1.size = 2;
+    pl_t1.on = 1;
+}
+
 static void plan_arrays(void)
 {
     plan_one(&dgl_gl.va, 1, &pl_v);
@@ -178,7 +195,7 @@ static void read_plan(const aplan *a, GLint i, float *out, int n, int normalise)
         for (k = 0; k < m; k++) out[k] = (float)((const int *)p)[k];
         break;
     case GL_UNSIGNED_BYTE:
-        for (k = 0; k < m; k++) out[k] = normalise ? p[k] / 255.0f : p[k];
+        for (k = 0; k < m; k++) out[k] = normalise ? DGL_UB(p[k]) : p[k];
         break;
     }
 }
@@ -308,13 +325,14 @@ static void assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, 
             return;
         }
     }
-    if (!imm) {
+    if (imm)
+        plan_imm(imm);
+    else
         plan_arrays();
-        if (dgl_sink.fast && dgl_sink.fast(mode, count, idx, first)) {
-            if (dgl_sink.end)
-                dgl_sink.end();
-            return;
-        }
+    if (dgl_sink.fast && dgl_sink.fast(mode, count, idx, first)) {     /* (a list's: indices into its vertices) */
+        if (dgl_sink.end)
+            dgl_sink.end();
+        return;
     }
     switch (mode) {
     case GL_TRIANGLES:
@@ -496,6 +514,6 @@ void APIENTRY glColor4f(GLfloat r, GLfloat g, GLfloat b, GLfloat a)
 void APIENTRY glColor3f(GLfloat r, GLfloat g, GLfloat b) { glColor4f(r, g, b, 1.0f); }
 void APIENTRY glColor4ub(GLubyte r, GLubyte g, GLubyte b, GLubyte a)
 {
-    glColor4f(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
+    glColor4f(DGL_UB(r), DGL_UB(g), DGL_UB(b), DGL_UB(a));
 }
 void APIENTRY glColor3ub(GLubyte r, GLubyte g, GLubyte b) { glColor4ub(r, g, b, 255); }
