@@ -558,8 +558,8 @@ static void fog_split(const dgl_cvtx *c0, const dgl_cvtx *c1, const dgl_cvtx *c2
  * vertex shared by several triangles of one dgl_assemble is projected
  * once. project() is out of line and deterministic, so a cached result is
  * the one a fresh call would give. */
-enum { VS_OC = 1, VS_PROJ = 2 };
-static struct { proj p; unsigned oc; } vs[DGL_VSLOTS];
+enum { VS_OC = 1, VS_PROJ = 2, VS_WARP = 4 };
+static struct { proj p; unsigned oc; mga_wvtx w; } vs[DGL_VSLOTS];
 
 static int slot_of(const dgl_cvtx *v)
 {
@@ -585,13 +585,98 @@ static const proj *slot_proj(int s, const dgl_cvtx *v)
     return &vs[s].p;
 }
 
+/* The WARP's vertex for a projected one, made once a vertex (the slots keep
+ * it): as to_wvtx makes it from the setup vertex, but with the texture
+ * coordinates undivided from the GL vertex (the same values but for
+ * rounding), and before anything a triangle changes (flat colour, polygon
+ * offset, the shift by whole periods: draw_warp). */
+static void warp_form(const dgl_cvtx *c, const proj *p, mga_wvtx *w)
+{
+    const mga_svtx *v = &p->v;
+    w->x = (float)p->x + WARP_SUBPIXEL_X;
+    w->y = (float)p->y + WARP_SUBPIXEL_Y;
+    w->z = (float)(v->z * (1.0 / 65535.0));
+    w->rhw = v->q;
+    w->bgra = byte_of(v->b) | (byte_of(v->g) << 8) | (byte_of(v->r) << 16) | (byte_of(v->a) << 24);
+    w->spec = byte_of(v->sb) | (byte_of(v->sg) << 8) | (byte_of(v->sr) << 16) | (byte_of(v->fog) << 24);
+    if (map0_unit) {
+        w->u0 = c->s1 * tex_scale_s;
+        w->v0 = c->t1 * tex_scale_t;
+    } else {
+        w->u0 = c->s * tex_scale_s;
+        w->v0 = c->t * tex_scale_t;
+    }
+    if (dual) {
+        w->u1 = map1_copy ? w->u0 / tex_scale_s * tex_scale_s1 : c->s1 * tex_scale_s1;
+        w->v1 = map1_copy ? w->v0 / tex_scale_t * tex_scale_t1 : c->t1 * tex_scale_t1;
+    } else
+        w->u1 = w->v1 = 0;
+}
+
+static const mga_wvtx *slot_warp(int s, const dgl_cvtx *v)
+{
+    if (!(dgl_vslot_sink[s] & VS_WARP)) {
+        warp_form(v, slot_proj(s, v), &vs[s].w);
+        dgl_vslot_sink[s] |= VS_WARP;
+    }
+    return &vs[s].w;
+}
+
+/* One triangle through the WARP from its vertices' WARP forms: 0, or -1
+ * when the WARP failed (the CPU sets up this triangle and the rest). */
+static int draw_warp(const mga_wvtx *a, const mga_wvtx *b, const mga_wvtx *c, const dgl_cvtx *flat)
+{
+    mga_wvtx w[3];
+    int i;
+    w[0] = *a; w[1] = *b; w[2] = *c;
+    if (flat) {
+        const uint32_t k = byte_of(flat->b * 255.0f) | (byte_of(flat->g * 255.0f) << 8) |
+                           (byte_of(flat->r * 255.0f) << 16) | (byte_of(flat->a * 255.0f) << 24);
+        w[0].bgra = w[1].bgra = w[2].bgra = k;
+    }
+    if (tri_offset != 0.0f)
+        for (i = 0; i < 3; i++) {
+            double z = w[i].z * 65535.0 + tri_offset;
+            w[i].z = (float)((z < 0 ? 0 : z > 65535.0 ? 65535.0 : z) * (1.0 / 65535.0));
+        }
+    if (textured)
+        warp_wrap(w, 0, &tstate);
+    if (dual)
+        warp_wrap(w, 1, &tstate1);
+    if (warp_vertices(w, 3) == 0) {
+        warp_since_cpu = 1;
+        return 0;
+    }
+    warp_on = warp_now = 0;                     /* the FIFO stopped draining: the CPU from now on */
+    DGL_WARN("DGL-WARN the WARP stopped taking vertices: triangles are set up by the CPU");
+    dgl_gl.dirty |= DGL_DIRTY_REGS;             /* (the engine was reset) */
+    return -1;
+}
+
+/* glPolygonOffset for the triangle (P0, P1, P2): GL's o = factor * max
+ * |dz/dx|, |dz/dy| + units * r, with z in depth-buffer steps (r = one step). */
+static float offset_for(const proj *p0, const proj *p1, const proj *p2)
+{
+    if (dgl_gl.offset_fill && (dgl_gl.offset_factor != 0.0f || dgl_gl.offset_units != 0.0f)) {
+        double x1 = p1->x - p0->x, y1 = p1->y - p0->y, z1 = p1->v.z - p0->v.z;
+        double x2 = p2->x - p0->x, y2 = p2->y - p0->y, z2 = p2->v.z - p0->v.z;
+        double det = x1 * y2 - x2 * y1, m = 0;
+        if (det != 0) {
+            double dzdx = fabs((z1 * y2 - z2 * y1) / det), dzdy = fabs((x1 * z2 - x2 * z1) / det);
+            m = dzdx > dzdy ? dzdx : dzdy;
+        }
+        return (float)(dgl_gl.offset_factor * m + dgl_gl.offset_units);
+    }
+    return 0.0f;
+}
+
 static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *c, const dgl_cvtx *prov)
 {
     dgl_cvtx in[3], out[9];
     proj p[9];
     const proj *P[9];
     const dgl_cvtx *C[9], *flat = NULL;
-    int n, i, sa = slot_of(a), sb = slot_of(b), sc = slot_of(c);
+    int n, i, sa = slot_of(a), sb = slot_of(b), sc = slot_of(c), fast = 0;
     int64_t area2;
     PROF_SCOPE(PROF_D_CLIP);
     dgl_prims.tris_in++;
@@ -602,6 +687,7 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
         P[0] = slot_proj(sa, a); P[1] = slot_proj(sb, b); P[2] = slot_proj(sc, c);
         C[0] = a; C[1] = b; C[2] = c;
         n = 3;
+        fast = 1;
         if (dgl_gl.shade_model == GL_FLAT)
             flat = prov;
     } else {
@@ -638,20 +724,28 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
         }
     }
     PROF_SWITCH(PROF_D_SETUP);
-    for (i = 1; i + 1 < n; i++) {
-        tri_offset = 0.0f;
-        if (dgl_gl.offset_fill && (dgl_gl.offset_factor != 0.0f || dgl_gl.offset_units != 0.0f)) {
-            /* GL: o = factor * max |dz/dx|, |dz/dy| + units * r, with z in
-             * depth-buffer steps (r = one step). */
-            double x1 = P[i]->x - P[0]->x, y1 = P[i]->y - P[0]->y, z1 = P[i]->v.z - P[0]->v.z;
-            double x2 = P[i + 1]->x - P[0]->x, y2 = P[i + 1]->y - P[0]->y, z2 = P[i + 1]->v.z - P[0]->v.z;
-            double det = x1 * y2 - x2 * y1, m = 0;
-            if (det != 0) {
-                double dzdx = fabs((z1 * y2 - z2 * y1) / det), dzdy = fabs((x1 * z2 - x2 * z1) / det);
-                m = dzdx > dzdy ? dzdx : dzdy;
+    if (warp_now && !dgl_gl.fog) {
+        /* The WARP from the vertices' WARP forms (made once each); fog's
+         * subdivision goes the setup vertices' way below. */
+        const mga_wvtx *W[9];
+        mga_wvtx wl[9];
+        for (i = 0; i < n; i++) {
+            if (fast)
+                W[i] = slot_warp(i == 0 ? sa : i == 1 ? sb : sc, C[i]);
+            else {
+                warp_form(C[i], P[i], &wl[i]);
+                W[i] = &wl[i];
             }
-            tri_offset = (float)(dgl_gl.offset_factor * m + dgl_gl.offset_units);
         }
+        for (i = 1; i + 1 < n; i++) {
+            tri_offset = offset_for(P[0], P[i], P[i + 1]);
+            if (!warp_now || draw_warp(W[0], W[i], W[i + 1], flat) != 0)
+                draw_projected(P[0], P[i], P[i + 1], flat);
+        }
+        return;
+    }
+    for (i = 1; i + 1 < n; i++) {
+        tri_offset = offset_for(P[0], P[i], P[i + 1]);
         if (dgl_gl.fog)
             fog_split(C[0], C[i], C[i + 1], P[0], P[i], P[i + 1], 0, flat);
         else
