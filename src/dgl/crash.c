@@ -21,8 +21,10 @@ void dgl_teardown(void)
     graphics = 0;
     if (warp_tris || warp_failures) {           /* DGL_WARP: the DMA window back to general purpose, the WARP suspended */
         warp_stop();
-        DGL_ERR("DGL-WARP tris=%lu failures=%lu kicks=%lu ring=%d/%luK", (unsigned long)warp_tris,
-                (unsigned long)warp_failures, (unsigned long)warp_dma_kicks, warp_ring_mode, (unsigned long)warp_ring_kb);
+        DGL_ERR("DGL-WARP tris=%lu failures=%lu kicks=%lu ring=%d/%luK wc=%d resets=%lu timeouts=%lu fence_stuck=%lu",
+                (unsigned long)warp_tris, (unsigned long)warp_failures, (unsigned long)warp_dma_kicks, warp_ring_mode,
+                (unsigned long)warp_ring_kb, warp_wc_status, (unsigned long)engine_resets,
+                (unsigned long)engine_timeouts, (unsigned long)engine_fence_stuck);
     }
     if (dgl_glos.on) {                          /* a GLOS window: GLOS has the screen and the engine's state */
         if (*dgl_glos.held)
