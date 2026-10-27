@@ -16,6 +16,8 @@ const mga_target *engine_target = &cur;
 static uint32_t cur_maccess;
 static int cur_ydstorg_px;
 static int clip_x0, clip_y0, clip_x1 = 0x7FFF, clip_y1 = 0x7FFF;
+int mga_dma_pending;                    /* vertices buffered or in flight by DMA (warp.c; hal.h) */
+void (*mga_dma_flush)(void);            /* sends and waits for them: register writes come after */
 uint32_t mga_opmode = MGA_OPMODE_UNKNOWN;   /* what OPMODE holds (ILOAD here, vertices in warp.c) */
 static int pitch_reg = -1;         /* the value in PITCH: targets may differ in pitch */
 
@@ -87,6 +89,8 @@ void engine_init(int pitch_px, int bpp)
 
 int engine_sync(uint32_t timeout_us)
 {
+    if (mga_dma_pending && mga_dma_flush)
+        mga_dma_flush();
     if (timeout_us < 120000u)
         timeout_us = 120000u;          /* at least two BIOS ticks */
     uint32_t start = sys_time_us(), polls = 0;
@@ -112,6 +116,8 @@ int engine_sync(uint32_t timeout_us)
  * they wait (DOS-GL's swap, which lets a program's audio thread run). */
 int engine_idle(void)
 {
+    if (mga_dma_pending && mga_dma_flush)
+        mga_dma_flush();
     return (MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)) && !(MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS);
 }
 
