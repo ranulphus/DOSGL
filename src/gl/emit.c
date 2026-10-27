@@ -763,7 +763,8 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
  * The arithmetic is project()'s; the CPU setup's path is not used here, so
  * its frames are unchanged. */
 #define FAST_SLOTS 256
-typedef struct { GLint key; unsigned gen, oc; int32_t X16, Y16; mga_wvtx w; } fast_vtx;
+typedef struct { GLint key; unsigned gen, oc; int32_t X16, Y16, fu, fv; mga_wvtx w; } fast_vtx;
+#define NO_FLOOR INT32_MIN              /* (a coordinate wrap_dw leaves alone, or a reason to ask it) */
 static fast_vtx fv[FAST_SLOTS];
 static unsigned fgen;
 static const float *fm;                 /* the MVP matrix */
@@ -790,6 +791,12 @@ static const fast_vtx *fast_get(GLint i)
     w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15] * p3;
     f->oc = (z + w < 0) | ((w - z < 0) << 1) | ((x + guard_x * w < 0) << 2) | ((guard_x * w - x < 0) << 3) |
             ((y + guard_y * w < 0) << 4) | ((guard_y * w - y < 0) << 5);
+    if (dgl_pl_c.on) {
+        const unsigned char *c = dgl_pl_c.p + (size_t)i * dgl_pl_c.stride;
+        f->w.bgra = (uint32_t)c[2] | ((uint32_t)c[1] << 8) | ((uint32_t)c[0] << 16) |
+                    ((uint32_t)(dgl_pl_c.size > 3 ? c[3] : 255) << 24);
+    } else
+        f->w.bgra = fbgra;
     if (f->oc)
         return f;
     iw = 1.0 / w;
@@ -802,12 +809,6 @@ static const fast_vtx *fast_get(GLint i)
     f->w.y = (float)yw + WARP_SUBPIXEL_Y;
     f->w.z = (float)(zw < 0 ? 0 : zw > 1 ? 1 : zw);
     f->w.rhw = (float)iw;
-    if (dgl_pl_c.on) {
-        const unsigned char *c = dgl_pl_c.p + (size_t)i * dgl_pl_c.stride;
-        f->w.bgra = (uint32_t)c[2] | ((uint32_t)c[1] << 8) | ((uint32_t)c[0] << 16) |
-                    ((uint32_t)(dgl_pl_c.size > 3 ? c[3] : 255) << 24);
-    } else
-        f->w.bgra = fbgra;
     if (dgl_gl.fog) {                   /* project()'s factor from dgl_transform's eye distance */
         const float *mv = fmv;
         float d = -(mv[2] * p[0] + mv[6] * p[1] + mv[10] * p[2] + mv[14] * p3);
@@ -825,7 +826,34 @@ static const fast_vtx *fast_get(GLint i)
         f->w.v0 = ft0;
     }
     f->w.u1 = f->w.v1 = 0;
+    if (textured == 1) {                /* wrap_dw's floor, ahead: the smallest of three is the floor of the smallest */
+        f->fu = f->w.u0 > -1e9f && f->w.u0 < 1e9f ? mga_ifloor(f->w.u0) : NO_FLOOR;
+        f->fv = f->w.v0 > -1e9f && f->w.v0 < 1e9f ? mga_ifloor(f->w.v0) : NO_FLOOR;
+    }
     return f;
+}
+
+static int32_t min3i(int32_t a, int32_t b, int32_t c)
+{
+    int32_t m = a < b ? a : b;
+    return c < m ? c : m;
+}
+
+/* A WARP vertex into the stream, its words in order (a write-combining ring
+ * takes whole lines best), with the colour given and its coordinates moved
+ * by whole periods (wrap_dw's result). */
+static void put8(uint32_t *d, const mga_wvtx *w, uint32_t bgra, int32_t su, int32_t sv)
+{
+    float u = w->u0, v = w->v0;
+    if (su)
+        u = w->u0 - (float)su;
+    if (sv)
+        v = w->v0 - (float)sv;
+    memcpy(d, w, 16);                   /* x, y, z, rhw */
+    d[4] = bgra;
+    d[5] = w->spec;
+    memcpy(d + 6, &u, 4);
+    memcpy(d + 7, &v, 4);
 }
 
 /* warp_wrap on three vertices already in the DMA stream: f[idx] of each
@@ -847,6 +875,7 @@ static void wrap_dw(float *f, int dw, int idx)
 
 static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
 {
+    const uint32_t flat = dgl_gl.shade_model == GL_FLAT ? fast_get(ip)->w.bgra : 0;    /* (first: its slot may be a's) */
     const fast_vtx *a = fast_get(ia), *b = fast_get(ib), *c = fast_get(ic);
     mga_wvtx w[3];
     int64_t area2;
@@ -885,11 +914,32 @@ static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
         int dw;
         uint32_t *d = warp_reserve(3, &dw);
         if (d) {                                /* straight into the DMA stream */
+            int32_t su = 0, sv = 0;
+            int whole = dw == 8;
+            if (textured == 1 && whole) {
+                if (!tstate.clamp_u) {
+                    su = min3i(a->fu, b->fu, c->fu);
+                    whole = whole && a->fu != NO_FLOOR && b->fu != NO_FLOOR && c->fu != NO_FLOOR;
+                }
+                if (!tstate.clamp_v) {
+                    sv = min3i(a->fv, b->fv, c->fv);
+                    whole = whole && a->fv != NO_FLOOR && b->fv != NO_FLOOR && c->fv != NO_FLOOR;
+                }
+            }
+            if (whole) {                        /* each word written once, in order */
+                int fl = dgl_gl.shade_model == GL_FLAT;
+                put8(d, &a->w, fl ? flat : a->w.bgra, su, sv);
+                put8(d + 8, &b->w, fl ? flat : b->w.bgra, su, sv);
+                put8(d + 16, &c->w, fl ? flat : c->w.bgra, su, sv);
+                warp_commit(3);
+                warp_since_cpu = 1;
+                return;
+            }
             memcpy(d, &a->w, (size_t)dw * 4u);
             memcpy(d + dw, &b->w, (size_t)dw * 4u);
             memcpy(d + 2 * dw, &c->w, (size_t)dw * 4u);
             if (dgl_gl.shade_model == GL_FLAT)
-                d[4] = d[4 + dw] = d[4 + 2 * dw] = fast_get(ip)->w.bgra;
+                d[4] = d[4 + dw] = d[4 + 2 * dw] = flat;
             if (textured == 1) {
                 if (!tstate.clamp_u)
                     wrap_dw((float *)d, dw, 6);
@@ -903,7 +953,7 @@ static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
     }
     w[0] = a->w; w[1] = b->w; w[2] = c->w;
     if (dgl_gl.shade_model == GL_FLAT)
-        w[0].bgra = w[1].bgra = w[2].bgra = fast_get(ip)->w.bgra;
+        w[0].bgra = w[1].bgra = w[2].bgra = flat;
     if (textured)
         warp_wrap(w, 0, &tstate);
     if (warp_vertices(w, 3) == 0) {
@@ -1056,6 +1106,12 @@ void dgl_emit_install(void)
     warp_on = !(e && *e == '0') && warp_available() && !dgl_glos.on;  /* (not in a GLOS window: dgl/glos.c) */
     e = getenv("DGL_WARPDMA");
     warp_use_dma = !(e && *e == '0');          /* DGL_WARPDMA=0: vertices by the CPU, no DMA stream */
+    e = getenv("DGL_AGP");
+    warp_use_agp = !(e && *e == '0');          /* DGL_AGP=0: cached rings fetched by PCI, under GLOS too */
+    if ((e = getenv("DGL_KICK")) != NULL && atoi(e) >= 512)
+        warp_kick_bytes = (uint32_t)atoi(e);    /* (tuning: vertex bytes between kicks) */
+    if ((e = getenv("DGL_RING")) != NULL && atoi(e) >= 32768)
+        warp_ring_bytes = (uint32_t)atoi(e);    /* (tuning: the rings' size at most) */
     warp_now = warp_since_cpu = 0;
     e = getenv("DGL_COMBINER");
     force_combiner = e && *e && *e != '0';

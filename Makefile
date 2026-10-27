@@ -21,7 +21,7 @@ Q ?= @
 DJENV := env LD_LIBRARY_PATH=$(DJGPP_PREFIX)/hostlib
 DJCC  := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-gcc
 DJAR  := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-ar
-DJ_CFLAGS := -std=gnu99 -O2 -march=i586 -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include \
+DJ_CFLAGS := -std=gnu99 -O2 -march=i586 -mtune=pentium2 -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include \
              -DMGA_DJGPP=1 -DDGL_BUILD_ID='"$(BUILD_ID)"'
 DJ_TESTFLAGS := -I$(MGAHAL)/tests/shim -DHX_BUILD_ID='"$(BUILD_ID)"'
 # PROF=1: the whole tree with stage timers (MGA_PROF, hal/include/mga/prof.h):

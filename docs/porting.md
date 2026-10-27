@@ -87,9 +87,13 @@ dglShutdown();
   - `DGL_VSYNC=0` or `1` overrides the program's choice of swap on retrace.
   - `DGL_WARP=0` sets every triangle up on the CPU on a G400 or G450, which otherwise use the chip's WARP
     setup engine with vertices by bus-master DMA (MGA-Glide `docs/g400-warp.md`). At exit a
-    `DGL-WARP tris= failures= kicks=` line counts its triangles, failures (each one sends the rest to the CPU)
-    and DMA transfers. `DGL_WARPDMA=0` sends the WARP's vertices by the CPU through the DMA window instead of
-    the DMA command stream.
+    `DGL-WARP tris= failures= kicks= ring=` line counts its triangles, failures (each one sends the rest to the
+    CPU) and DMA transfers, and says what the rings were: 1 cached (PCI), 2 write-combining (PCI), 3
+    write-combining fetched by AGP, and their size. `DGL_WARPDMA=0` sends the WARP's vertices by the CPU through
+    the DMA window instead of the DMA command stream.
+  - `DGL_AGP=0` keeps the DMA rings cached and fetched by PCI under GLOS too, which otherwise makes them
+    write-combining (API 1.4) and turns AGP on. `DGL_RING=bytes` (256 KB) and `DGL_KICK=bytes` (6 KB of
+    vertices between kicks) tune the rings.
   - `DGL_FAST=0` turns off the fast path: triangles from vertex arrays straight to the WARP (no fog, texture
     matrix, polygon offset or second map), each vertex transformed and projected once.
   - `DGL_TEXHEAP_KB=n` caps the texture heap (to test eviction, or to

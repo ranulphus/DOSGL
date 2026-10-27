@@ -1,6 +1,6 @@
 # Matrox HAL and test harness
 
-Exported from MGA-Glide 0e8c9ab by `tools/hal-export.sh`. Shared by
+Exported from MGA-Glide 5e06def by `tools/hal-export.sh`. Shared by
 MGA-Glide (Open Watcom, DOS/4GW) and DOS-GL (DJGPP):
 
 | Path | Contents |
