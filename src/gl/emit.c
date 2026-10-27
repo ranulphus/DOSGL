@@ -753,6 +753,172 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
     }
 }
 
+/* ---- The fast path: vertex arrays straight to the WARP (S1) ---------------
+ * A draw of triangles from vertex arrays, while the WARP draws the state and
+ * there is no fog, texture matrix, polygon offset, second map or remapped
+ * unit: each vertex is fetched, transformed, given its outcode and projected
+ * straight into its WARP form once (a direct-mapped cache by index), and a
+ * triangle is culled and sent as three copies. A triangle with a vertex
+ * outside the guard band goes the general way (dgl_tri_general: clipping).
+ * The arithmetic is project()'s; the CPU setup's path is not used here, so
+ * its frames are unchanged. */
+#define FAST_SLOTS 256
+typedef struct { GLint key; unsigned gen, oc; int32_t X16, Y16; mga_wvtx w; } fast_vtx;
+static fast_vtx fv[FAST_SLOTS];
+static unsigned fgen;
+static const float *fm;                 /* the MVP matrix */
+static uint32_t fbgra;                  /* the current colour, without a colour array */
+static float fs0, ft0;                  /* the current texture coordinates, without an array */
+
+static const fast_vtx *fast_get(GLint i)
+{
+    fast_vtx *f = &fv[(unsigned)i & (FAST_SLOTS - 1)];
+    const float *p, *m = fm;
+    float x, y, z, w, p3;
+    double iw, xw, yw, zw;
+    if (f->gen == fgen && f->key == i)
+        return f;
+    f->key = i;
+    f->gen = fgen;
+    p = (const float *)(dgl_pl_v.p + (size_t)i * dgl_pl_v.stride);
+    p3 = dgl_pl_v.size > 3 ? p[3] : 1.0f;
+    x = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12] * p3;
+    y = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13] * p3;
+    z = m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14] * p3;
+    w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15] * p3;
+    f->oc = (z + w < 0) | ((w - z < 0) << 1) | ((x + guard_x * w < 0) << 2) | ((guard_x * w - x < 0) << 3) |
+            ((y + guard_y * w < 0) << 4) | ((guard_y * w - y < 0) << 5);
+    if (f->oc)
+        return f;
+    iw = 1.0 / w;
+    xw = dgl_gl.viewport[0] + (x * iw + 1.0) * 0.5 * dgl_gl.viewport[2];
+    yw = dgl_ctx.height - (dgl_gl.viewport[1] + (y * iw + 1.0) * 0.5 * dgl_gl.viewport[3]);
+    zw = dgl_gl.depth_near + (z * iw + 1.0) * 0.5 * (dgl_gl.depth_far - dgl_gl.depth_near);
+    f->X16 = mga_irint_nearest(xw * 16.0);
+    f->Y16 = mga_irint_nearest(yw * 16.0);
+    f->w.x = (float)xw + WARP_SUBPIXEL_X;
+    f->w.y = (float)yw + WARP_SUBPIXEL_Y;
+    f->w.z = (float)(zw < 0 ? 0 : zw > 1 ? 1 : zw);
+    f->w.rhw = (float)iw;
+    if (dgl_pl_c.on) {
+        const unsigned char *c = dgl_pl_c.p + (size_t)i * dgl_pl_c.stride;
+        f->w.bgra = (uint32_t)c[2] | ((uint32_t)c[1] << 8) | ((uint32_t)c[0] << 16) |
+                    ((uint32_t)(dgl_pl_c.size > 3 ? c[3] : 255) << 24);
+    } else
+        f->w.bgra = fbgra;
+    f->w.spec = 0xFF000000u;            /* (no fog: its factor 255) */
+    if (dgl_pl_t.on) {
+        const float *t = (const float *)(dgl_pl_t.p + (size_t)i * dgl_pl_t.stride);
+        f->w.u0 = t[0] * tex_scale_s;
+        f->w.v0 = t[1] * tex_scale_t;
+    } else {
+        f->w.u0 = fs0;
+        f->w.v0 = ft0;
+    }
+    f->w.u1 = f->w.v1 = 0;
+    return f;
+}
+
+static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
+{
+    const fast_vtx *a = fast_get(ia), *b = fast_get(ib), *c = fast_get(ic);
+    mga_wvtx w[3];
+    int64_t area2;
+    if ((a->oc | b->oc | c->oc) || !warp_now) {
+        dgl_tri_general(ia, ib, ic, ip);        /* (counts itself) */
+        return;
+    }
+    dgl_prims.tris_in++;
+    area2 = (int64_t)(b->X16 - a->X16) * (c->Y16 - a->Y16) - (int64_t)(c->X16 - a->X16) * (b->Y16 - a->Y16);
+    if (area2 == 0) {
+        dgl_prims.zero_area++;
+        return;
+    }
+    if (dgl_gl.cull_face) {
+        int front = (dgl_gl.front_face == GL_CCW) ? area2 < 0 : area2 > 0;
+        if (dgl_gl.cull_mode == GL_FRONT_AND_BACK || (dgl_gl.cull_mode == GL_BACK) != front) {
+            dgl_prims.culled++;
+            return;
+        }
+    }
+    w[0] = a->w; w[1] = b->w; w[2] = c->w;
+    if (dgl_gl.shade_model == GL_FLAT)
+        w[0].bgra = w[1].bgra = w[2].bgra = fast_get(ip)->w.bgra;
+    if (textured)
+        warp_wrap(w, 0, &tstate);
+    if (warp_vertices(w, 3) == 0) {
+        warp_since_cpu = 1;
+        return;
+    }
+    warp_on = warp_now = 0;                     /* the FIFO stopped draining: the CPU from now on */
+    DGL_WARN("DGL-WARN the WARP stopped taking vertices: triangles are set up by the CPU");
+    dgl_gl.dirty |= DGL_DIRTY_REGS;
+    dgl_prims.tris_in--;
+    dgl_tri_general(ia, ib, ic, ip);
+}
+
+static int emit_fast(GLenum mode, GLsizei count, const GLint *idx, GLint first)
+{
+    GLsizei i;
+    if (!warp_now || dgl_gl.fog || !dgl_gl.tex_identity || dual || map0_unit || textured == 2 ||
+        (dgl_gl.offset_fill && (dgl_gl.offset_factor != 0.0f || dgl_gl.offset_units != 0.0f)) ||
+        dgl_pl_v.type != GL_FLOAT || dgl_pl_v.size < 3 ||
+        (dgl_pl_c.on && dgl_pl_c.type != GL_UNSIGNED_BYTE) || (dgl_pl_c.on && dgl_pl_c.size < 3) ||
+        (dgl_pl_t.on && (dgl_pl_t.type != GL_FLOAT || dgl_pl_t.size < 2)))
+        return 0;
+    switch (mode) {
+    case GL_TRIANGLES: case GL_TRIANGLE_STRIP: case GL_TRIANGLE_FAN:
+    case GL_QUADS: case GL_QUAD_STRIP: case GL_POLYGON:
+        break;
+    default:
+        return 0;
+    }
+    if (++fgen == 0) {                          /* (a wrapped generation: every slot stale) */
+        memset(fv, 0, sizeof fv);
+        fgen = 1;
+    }
+    fm = dgl_mvp()->m;
+    fbgra = byte_of(dgl_gl.cur_color[2] * 255.0f) | (byte_of(dgl_gl.cur_color[1] * 255.0f) << 8) |
+            (byte_of(dgl_gl.cur_color[0] * 255.0f) << 16) | (byte_of(dgl_gl.cur_color[3] * 255.0f) << 24);
+    fs0 = dgl_gl.cur_tex[0] * tex_scale_s;
+    ft0 = dgl_gl.cur_tex[1] * tex_scale_t;
+#define I(k) (idx ? idx[k] : first + (k))
+    switch (mode) {
+    case GL_TRIANGLES:
+        for (i = 0; i + 2 < count; i += 3)
+            fast_tri(I(i), I(i + 1), I(i + 2), I(i + 2));
+        break;
+    case GL_TRIANGLE_STRIP:
+        for (i = 0; i + 2 < count; i++) {
+            if (i & 1) fast_tri(I(i + 1), I(i), I(i + 2), I(i + 2));
+            else       fast_tri(I(i), I(i + 1), I(i + 2), I(i + 2));
+        }
+        break;
+    case GL_TRIANGLE_FAN:
+        for (i = 1; i + 1 < count; i++)
+            fast_tri(I(0), I(i), I(i + 1), I(i + 1));
+        break;
+    case GL_QUADS:
+        for (i = 0; i + 3 < count; i += 4) {
+            fast_tri(I(i), I(i + 1), I(i + 2), I(i + 3));
+            fast_tri(I(i), I(i + 2), I(i + 3), I(i + 3));
+        }
+        break;
+    case GL_QUAD_STRIP:
+        for (i = 0; i + 3 < count; i += 2) {
+            fast_tri(I(i), I(i + 1), I(i + 3), I(i + 3));
+            fast_tri(I(i), I(i + 3), I(i + 2), I(i + 3));
+        }
+        break;
+    case GL_POLYGON:
+        for (i = 1; i + 1 < count; i++)
+            fast_tri(I(0), I(i), I(i + 1), I(0));
+        break;
+    }
+#undef I
+    return 1;
+}
+
 /* ---- Lines and points: one-pixel screen-space quads (PRD §7) ------------ */
 static void quad(proj *a, proj *b, double ox, double oy)
 {
@@ -818,6 +984,8 @@ void dgl_emit_install(void)
 {
     const char *e = getenv("DGL_WARP");
     warp_on = !(e && *e == '0') && warp_available();
+    e = getenv("DGL_WARPDMA");
+    warp_use_dma = !(e && *e == '0');          /* DGL_WARPDMA=0: vertices by the CPU, no DMA stream */
     warp_now = warp_since_cpu = 0;
     e = getenv("DGL_COMBINER");
     force_combiner = e && *e && *e != '0';
@@ -827,6 +995,8 @@ void dgl_emit_install(void)
     guard_px = e && atoi(e) > 0 && atoi(e) <= 2000 ? (float)atoi(e) : 2000.0f;
     dgl_sink.begin = emit_begin;
     dgl_sink.triangle = emit_triangle;
+    e = getenv("DGL_FAST");
+    dgl_sink.fast = e && *e == '0' ? NULL : emit_fast;     /* DGL_FAST=0: the general path only */
     dgl_sink.line = emit_line;
     dgl_sink.point = emit_point;
     dgl_sink.end = emit_end;

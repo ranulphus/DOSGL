@@ -134,8 +134,12 @@ void dgl_fetch_vertex(GLint i, dgl_vin *v);
 /* The arrays resolved once a draw (assemble): each one's first element and
  * stride, so a vertex is fetched without dgl_buffer_address, type_size and a
  * type switch for every component. The values are read_comps's. */
-typedef struct { const unsigned char *p; size_t stride; GLenum type; int size, on; } aplan;
-static aplan pl_v, pl_c, pl_t, pl_t1;
+typedef dgl_aplan aplan;
+dgl_aplan dgl_pl_v, dgl_pl_c, dgl_pl_t, dgl_pl_t1;
+#define pl_v dgl_pl_v
+#define pl_c dgl_pl_c
+#define pl_t dgl_pl_t
+#define pl_t1 dgl_pl_t1
 
 static void plan_one(const dgl_array *a, int on, aplan *o)
 {
@@ -270,6 +274,11 @@ static void tri(GLint a, GLint b, GLint c, GLint prov, const dgl_vin *imm)
 #undef CLASH
 }
 
+void dgl_tri_general(GLint a, GLint b, GLint c, GLint provoking)
+{
+    tri(a, b, c, provoking, NULL);
+}
+
 static void line(GLint a, GLint b, const dgl_vin *imm)
 {
     dgl_cvtx v0 = *get(a, imm), v1 = *get(b, imm);
@@ -299,8 +308,14 @@ static void assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, 
             return;
         }
     }
-    if (!imm)
+    if (!imm) {
         plan_arrays();
+        if (dgl_sink.fast && dgl_sink.fast(mode, count, idx, first)) {
+            if (dgl_sink.end)
+                dgl_sink.end();
+            return;
+        }
+    }
     switch (mode) {
     case GL_TRIANGLES:
         for (i = 0; i + 2 < count; i += 3)

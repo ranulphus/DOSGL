@@ -21,6 +21,9 @@ typedef struct {
     void (*line)(const dgl_cvtx *a, const dgl_cvtx *b);
     void (*point)(const dgl_cvtx *a);
     void (*end)(void);
+    /* A whole draw from the arrays the sink can do its own fast way
+     * (emit.c's fast path): 1 when it did. */
+    int  (*fast)(GLenum mode, GLsizei count, const GLint *idx, GLint first);
     /* Display lists (lists.c): return 1 when the call was captured. */
     int  (*record)(GLenum mode, GLsizei count, const GLint *idx, GLint first);
     int  (*record_imm)(GLenum mode, GLsizei count, const dgl_vin *v);
@@ -29,6 +32,13 @@ typedef struct {
 extern dgl_sinks dgl_sink;
 
 void dgl_transform(const dgl_vin *in, dgl_cvtx *out);
+/* The arrays resolved for the current draw (vertex.c, once a draw): each
+ * one's first element, stride, type and size, and whether it is on. */
+typedef struct { const unsigned char *p; size_t stride; GLenum type; int size, on; } dgl_aplan;
+extern dgl_aplan dgl_pl_v, dgl_pl_c, dgl_pl_t, dgl_pl_t1;
+/* One triangle of the current array draw the general way (vertex.c's cache,
+ * then the triangle sink): for the fast path's triangles that need clipping. */
+void dgl_tri_general(GLint a, GLint b, GLint c, GLint provoking);
 /* Assemble a primitive from the current arrays (imm = NULL; idx or first)
  * or from an immediate-mode buffer (imm). */
 void dgl_assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, const dgl_vin *imm);
