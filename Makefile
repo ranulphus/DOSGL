@@ -71,7 +71,7 @@ $(LIB): $(DGL_SRCS:%.c=build/djgpp/%.o) $(GEN_SRCS:%.c=build/djgpp/%.o) $(HAL_SR
 lib: $(LIB)
 
 # Examples: one directory each, linked with the guest test shim (HX- lines).
-EXAMPLES := hello probe clear tri cube texcube g4exp resgl
+EXAMPLES := hello probe clear tri cube texcube g4exp texexp resgl
 build/exe/%.EXE: $(LIB) $(MGAHAL)/tests/shim/hx.c
 	@mkdir -p $(dir $@)
 	$(Q)echo "  DJLD    $@"
@@ -85,6 +85,7 @@ build/exe/TRI.EXE: $(wildcard examples/tri/*.c) src/dgl/dgl.h
 build/exe/CUBE.EXE: $(wildcard examples/cube/*.c)
 build/exe/TEXCUBE.EXE: $(wildcard examples/texcube/*.c) examples/common/texscene.h
 build/exe/G4EXP.EXE: $(wildcard examples/g4exp/*.c) src/dgl/dgl.h src/gl/gl_tex.h
+build/exe/TEXEXP.EXE: $(wildcard examples/texexp/*.c)
 build/exe/RESGL.EXE: $(wildcard examples/resgl/*.c)
 examples: $(foreach e,$(EXAMPLES),build/exe/$(shell echo $(e) | tr a-z A-Z).EXE)
 
