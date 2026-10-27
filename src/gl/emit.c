@@ -14,6 +14,7 @@
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
 #include "mga/setup.h"
+#include "mga/warp.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,6 +46,12 @@ static float guard_px = 2000.0f;
 static int skip_all;                  /* depth or alpha function NEVER, or no context */
 static float tri_offset;              /* glPolygonOffset for the triangle being drawn (depth steps) */
 static float guard_x, guard_y;
+/* DGL_WARP=1 (G400): triangles set up by the chip's WARP engine from the
+ * projected vertices instead of by setup_triangle (MGA-Glide
+ * docs/g400-warp.md). Off by default until the bench has checked it. */
+static int warp_on;                   /* asked for, on a chip with a WARP */
+static int warp_now;                  /* the current state draws through the WARP */
+static int warp_since_cpu;            /* WARP triangles since setup_triangle's last: its shadows are stale */
 
 /* ---- State validation --------------------------------------------------- */
 static uint32_t zmode_for(GLenum f)
@@ -273,6 +280,27 @@ static void validate(void)
             if (mga.has_dual_tex)
                 tex_emit_combiner(w0, w1);  /* zero words pass the legacy result through */
         }
+        /* The WARP: Mesa's two pipes (everything iterated; DWGCTL, ALPHACTRL,
+         * MACCESS and TEXCTL2 decide what is used), DWGCTL written here (the
+         * setup writes it otherwise), the maps' sizes as the microcode wants
+         * them. */
+        warp_now = 0;
+        if (warp_on) {
+            if (warp_select(WARP_S | WARP_A | WARP_F | (dual ? WARP_T2 : 0)) == 0) {
+                warp_now = 1;
+                fifo_reserve(1);
+                MGA_WR32(MGAREG_DWGCTL, tctx.dwgctl);
+                if (textured) {
+                    warp_tex(0, tstate.w_log2, tstate.h_log2, 0);
+                    if (dual)
+                        warp_tex(1, tstate1.w_log2, tstate1.h_log2, tctx.texctl2_1);
+                } else
+                    warp_tex_sizes(0, 0, 0, 0);
+            } else {
+                warp_on = 0;
+                DGL_WARN("DGL-WARN the WARP did not start: triangles are set up by the CPU");
+            }
+        }
         if (mga.has_alpha_blend) {
             alphactrl = ALPHACTRL_ALPHASEL(asel);
             if (dgl_gl.blend)
@@ -376,6 +404,29 @@ static void clamp_colour(mga_svtx *v)
 #undef C
 }
 
+/* A WARP vertex from a projected one and its setup values (colours clamped,
+ * depth offset, texture coordinates adjusted): Mesa's mga vertex, with its
+ * subpixel offset from the window coordinates the CPU setup rounds. */
+static uint32_t byte_of(float f)
+{
+    return (uint32_t)(f <= 0 ? 0 : f >= 255.0f ? 255 : (int)(f + 0.5f));
+}
+
+static void to_wvtx(const proj *p, const mga_svtx *v, mga_wvtx *w)
+{
+    const float q = v->q > 0 ? v->q : 1e-9f;
+    w->x = (float)p->x + WARP_SUBPIXEL_X;
+    w->y = (float)p->y + WARP_SUBPIXEL_Y;
+    w->z = (float)(v->z * (1.0 / 65535.0));
+    w->rhw = v->q;
+    w->bgra = byte_of(v->b) | (byte_of(v->g) << 8) | (byte_of(v->r) << 16) | (byte_of(v->a) << 24);
+    w->spec = byte_of(v->sb) | (byte_of(v->sg) << 8) | (byte_of(v->sr) << 16) | (byte_of(v->fog) << 24);
+    w->u0 = v->s / q;
+    w->v0 = v->t / q;
+    w->u1 = v->s1 / q;
+    w->v1 = v->t1 / q;
+}
+
 /* flat: the provoking vertex when its colour is to replace the projected
  * ones (GL_FLAT on the fast path: the same product project() makes). */
 static void draw_projected(const proj *p0, const proj *p1, const proj *p2, const dgl_cvtx *flat)
@@ -396,6 +447,23 @@ static void draw_projected(const proj *p0, const proj *p1, const proj *p2, const
         tex_adjust_coords(&a, &b, &c, &tstate);
     if (dual)
         tex_adjust_coords1(&a, &b, &c, &tstate1);
+    if (warp_now) {
+        mga_wvtx w[3];
+        to_wvtx(p0, &a, &w[0]);
+        to_wvtx(p1, &b, &w[1]);
+        to_wvtx(p2, &c, &w[2]);
+        if (warp_vertices(w, 3) == 0) {
+            warp_since_cpu = 1;
+            return;
+        }
+        warp_on = warp_now = 0;                 /* the FIFO stopped draining: the CPU from now on */
+        DGL_WARN("DGL-WARN the WARP stopped taking vertices: triangles are set up by the CPU");
+        dgl_gl.dirty |= DGL_DIRTY_RASTER;
+    }
+    if (warp_since_cpu) {
+        setup_invalidate();                     /* the WARP wrote the registers setup_triangle shadows */
+        warp_since_cpu = 0;
+    }
     setup_triangle(&a, &b, &c, &tctx);
 }
 
@@ -608,7 +676,10 @@ static void emit_end(void) { }
 
 void dgl_emit_install(void)
 {
-    const char *e = getenv("DGL_COMBINER");
+    const char *e = getenv("DGL_WARP");
+    warp_on = e && *e == '1' && warp_available();
+    warp_now = warp_since_cpu = 0;
+    e = getenv("DGL_COMBINER");
     force_combiner = e && *e && *e != '0';
     e = getenv("DGL_TC2_EXTRA");
     tc2_extra = e && *e && mga.has_dual_tex ? (uint32_t)strtoul(e, NULL, 16) : 0;

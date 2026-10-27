@@ -34,7 +34,7 @@ endif
 
 # The shared HAL (PRD D15) goes into libGL.a so consumers link only -lGL.
 HAL_SRCS := $(addprefix $(MGAHAL)/hal/,src/debug/serial.c src/pci.c src/chip.c src/vbe.c src/fifo.c \
-              src/engine.c src/dac.c src/texhw.c src/present.c src/debug/regtrace.c src/setup/trap.c port/djgpp.c)
+              src/engine.c src/dac.c src/texhw.c src/present.c src/debug/regtrace.c src/setup/trap.c src/warp.c port/djgpp.c)
 DGL_SRCS := $(wildcard src/dgl/*.c) $(wildcard src/gl/*.c)
 LIB := build/lib/libGL.a
 
