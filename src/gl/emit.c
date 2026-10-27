@@ -974,6 +974,73 @@ static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
     dgl_tri_general(ia, ib, ic, ip);
 }
 
+/* A fan (GL_TRIANGLE_FAN, GL_POLYGON) or strip (GL_TRIANGLE_STRIP) as one
+ * sequence of the WARPs' (warp_reserve_seq): each vertex once in the DMA
+ * stream, not three times a triangle. Only when it draws the triangles
+ * fast_tri would: every vertex inside the guard band, none of the triangles
+ * zero in area or culled, no fog, smooth shading (or GL_POLYGON's one flat
+ * colour). The texture coordinates move by the sequence's whole periods,
+ * not each triangle's. 1 when sent; 0: the caller sends triangles. */
+#define SEQ_MAX 64
+static int seq_kinds = 7;               /* DGL_SEQ: 1 fans and polygons, 2 strips, 4 flat polygons (0: none) */
+static int fast_seq(GLenum mode, GLsizei count, const GLint *idx, GLint first)
+{
+    static mga_wvtx sw[SEQ_MAX];        /* (copies: a slot may be refilled within the sequence) */
+    static int32_t sx[SEQ_MAX], sy[SEQ_MAX], sfu[SEQ_MAX], sfv[SEQ_MAX];
+    const int fan = mode != GL_TRIANGLE_STRIP, flat = dgl_gl.shade_model == GL_FLAT;
+    int32_t su = 0, sv = 0;
+    uint32_t *d;
+    GLsizei i;
+    int dw;
+    if (count < 5 || count > SEQ_MAX || dgl_gl.fog || (flat && (mode != GL_POLYGON || !(seq_kinds & 4))) ||
+        !(seq_kinds & (fan ? 1 : 2)))
+        return 0;
+
+    for (i = 0; i < count; i++) {
+        const fast_vtx *f = fast_get(idx ? idx[i] : first + i);
+        if (f->oc)
+            return 0;
+        sw[i] = f->w;
+        sx[i] = f->X16; sy[i] = f->Y16;
+        sfu[i] = f->fu; sfv[i] = f->fv;
+    }
+    for (i = 0; i + 2 < count; i++) {   /* fast_tri's triangles: none zero in area, none culled */
+        const int a = fan ? 0 : (i & 1) ? i + 1 : i, b = fan ? i + 1 : (i & 1) ? i : i + 1, c = i + 2;
+        const int64_t area2 = (int64_t)(sx[b] - sx[a]) * (sy[c] - sy[a]) - (int64_t)(sx[c] - sx[a]) * (sy[b] - sy[a]);
+        if (area2 == 0)
+            return 0;
+        if (dgl_gl.cull_face) {
+            int front = (dgl_gl.front_face == GL_CCW) ? area2 < 0 : area2 > 0;
+            if (dgl_gl.cull_mode == GL_FRONT_AND_BACK || (dgl_gl.cull_mode == GL_BACK) != front)
+                return 0;
+        }
+    }
+    if (textured == 1) {
+        if (!tstate.clamp_u)
+            for (su = sfu[0], i = 0; i < count; i++) {
+                if (sfu[i] == NO_FLOOR)
+                    return 0;
+                if (sfu[i] < su) su = sfu[i];
+            }
+        if (!tstate.clamp_v)
+            for (sv = sfv[0], i = 0; i < count; i++) {
+                if (sfv[i] == NO_FLOOR)
+                    return 0;
+                if (sfv[i] < sv) sv = sfv[i];
+            }
+    }
+    d = warp_reserve_seq(fan, (int)count, &dw);
+    if (!d)
+        return 0;
+    for (i = 0; i < count; i++)
+        put8(d + 8 * i, &sw[i], flat ? sw[0].bgra : sw[i].bgra, su, sv);
+    warp_commit_seq((int)count);
+    warp_since_cpu = 1;
+    dgl_prims.tris_in += (unsigned)(count - 2);
+    dgl_prims.seqs++;
+    return 1;
+}
+
 static int emit_fast(GLenum mode, GLsizei count, const GLint *idx, GLint first)
 {
     GLsizei i;
@@ -1008,12 +1075,16 @@ static int emit_fast(GLenum mode, GLsizei count, const GLint *idx, GLint first)
             fast_tri(I(i), I(i + 1), I(i + 2), I(i + 2));
         break;
     case GL_TRIANGLE_STRIP:
+        if (fast_seq(mode, count, idx, first))
+            break;
         for (i = 0; i + 2 < count; i++) {
             if (i & 1) fast_tri(I(i + 1), I(i), I(i + 2), I(i + 2));
             else       fast_tri(I(i), I(i + 1), I(i + 2), I(i + 2));
         }
         break;
     case GL_TRIANGLE_FAN:
+        if (fast_seq(mode, count, idx, first))
+            break;
         for (i = 1; i + 1 < count; i++)
             fast_tri(I(0), I(i), I(i + 1), I(i + 1));
         break;
@@ -1030,6 +1101,8 @@ static int emit_fast(GLenum mode, GLsizei count, const GLint *idx, GLint first)
         }
         break;
     case GL_POLYGON:
+        if (fast_seq(mode, count, idx, first))
+            break;
         for (i = 1; i + 1 < count; i++)
             fast_tri(I(0), I(i), I(i + 1), I(0));
         break;
@@ -1116,6 +1189,8 @@ void dgl_emit_install(void)
     warp_use_dma = !(e && *e == '0');          /* DGL_WARPDMA=0: vertices by the CPU, no DMA stream */
     e = getenv("DGL_AGP");
     warp_use_agp = !(e && *e == '0');          /* DGL_AGP=0: cached rings fetched by PCI, under GLOS too */
+    if ((e = getenv("DGL_SEQ")) != NULL)
+        seq_kinds = atoi(e) & 7;
     if ((e = getenv("DGL_KICK")) != NULL && atoi(e) >= 512)
         warp_kick_bytes = (uint32_t)atoi(e);    /* (tuning: vertex bytes between kicks) */
     if ((e = getenv("DGL_RING")) != NULL && atoi(e) >= 32768)

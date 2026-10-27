@@ -585,9 +585,9 @@ void dglSwapBuffers(void)
                 prof_report(setup_stats.tris - stats_tris0);
 #endif
             if (stats_on >= 2) {
-                DGL_ERR("DGL-PRIMS begins=%lu skipped=%lu tris=%lu clipped=%lu zero=%lu culled=%lu",
+                DGL_ERR("DGL-PRIMS begins=%lu skipped=%lu tris=%lu clipped=%lu zero=%lu culled=%lu seqs=%lu",
                         dgl_prims.begins, dgl_prims.skipped, dgl_prims.tris_in, dgl_prims.clipped,
-                        dgl_prims.zero_area, dgl_prims.culled);
+                        dgl_prims.zero_area, dgl_prims.culled, dgl_prims.seqs);
                 memset(&dgl_prims, 0, sizeof dgl_prims);
                 DGL_ERR("DGL-TEX uploads=%lu kb=%lu sub_fast=%lu sub_sync=%lu sub_iload=%lu sub_full=%lu renames=%lu "
                         "evictions=%lu syncs=%lu lut_loads=%lu", dgl_texc.uploads, dgl_texc.upload_bytes >> 10,
