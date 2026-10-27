@@ -775,7 +775,8 @@ static const fast_vtx *fast_get(GLint i)
 {
     fast_vtx *f = &fv[(unsigned)i & (FAST_SLOTS - 1)];
     const float *p, *m = fm;
-    float x, y, z, w, p3;
+    volatile float x, y, z, w;          /* stored as floats, as dgl_transform's: the general path's values exactly */
+    float p3;
     double iw, xw, yw, zw;
     if (f->gen == fgen && f->key == i)
         return f;

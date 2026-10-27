@@ -25,6 +25,7 @@
 #include "dgl.h"
 #include "../gl/gl_state.h"
 #include "mga/mmio.h"
+#include "mga/warp.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -209,6 +210,11 @@ int dgl_glos_open(dgl_glos_layout *l)
     l->heap_end = l->heap_off + b;
     l->vram_bytes = g.vram;
     dgl_glos.on = 1;
+    /* The WARP's vertices by the CPU, not by the DMA command stream: GLOS
+     * takes the engine back in the program's next DOS or GLOS call, when
+     * commands could still be waiting in the stream's list to run after
+     * GLOS's own (conformance t27 in a window on bench-g400). */
+    warp_use_dma = 0;
     (void)a;
     return 0;
 }
