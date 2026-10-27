@@ -756,15 +756,15 @@ static void emit_triangle(const dgl_cvtx *a, const dgl_cvtx *b, const dgl_cvtx *
 /* ---- The fast path: vertex arrays straight to the WARP (S1) ---------------
  * A draw of triangles from vertex arrays (or immediate mode's vertices,
  * planned as arrays at glEnd: vertex.c), while the WARP draws the state and
- * there is no fog, texture matrix, polygon offset, second map or remapped
- * unit: each vertex is fetched, transformed, given its outcode and projected
+ * there is no fog, texture matrix, polygon offset, repeated map 1 or
+ * remapped unit (G400 dual texturing is drawn, map 1 from unit 1): each vertex is fetched, transformed, given its outcode and projected
  * straight into its WARP form once (a direct-mapped cache by index), and a
  * triangle is culled and sent as three copies. A triangle with a vertex
  * outside the guard band goes the general way (dgl_tri_general: clipping).
  * The arithmetic is project()'s; the CPU setup's path is not used here, so
  * its frames are unchanged. */
 #define FAST_SLOTS 256
-typedef struct { GLint key; unsigned gen, oc; int32_t X16, Y16, fu, fv; mga_wvtx w; } fast_vtx;
+typedef struct { GLint key; unsigned gen, oc; int32_t X16, Y16, fu, fv, fu1, fv1; mga_wvtx w; } fast_vtx;
 #define NO_FLOOR INT32_MIN              /* (a coordinate wrap_dw leaves alone, or a reason to ask it) */
 static fast_vtx fv[FAST_SLOTS];
 static unsigned fgen;
@@ -772,6 +772,7 @@ static const float *fm;                 /* the MVP matrix */
 static const float *fmv;                /* the modelview matrix, for fog's eye distance */
 static uint32_t fbgra;                  /* the current colour, without a colour array */
 static float fs0, ft0;                  /* the current texture coordinates, without an array */
+static float fs1, ft1;                  /* unit 1's */
 
 static const fast_vtx *fast_get(GLint i)
 {
@@ -832,11 +833,23 @@ static const fast_vtx *fast_get(GLint i)
         f->w.u0 = fs0;
         f->w.v0 = ft0;
     }
-    f->w.u1 = f->w.v1 = 0;
     if (textured == 1) {                /* wrap_dw's floor, ahead: the smallest of three is the floor of the smallest */
         f->fu = f->w.u0 > -1e9f && f->w.u0 < 1e9f ? mga_ifloor(f->w.u0) : NO_FLOOR;
         f->fv = f->w.v0 > -1e9f && f->w.v0 < 1e9f ? mga_ifloor(f->w.v0) : NO_FLOOR;
     }
+    if (dual) {                         /* warp_form's map 1, from unit 1 (not map1_copy: emit_fast) */
+        if (dgl_pl_t1.on) {
+            const float *t = (const float *)(dgl_pl_t1.p + (size_t)i * dgl_pl_t1.stride);
+            f->w.u1 = t[0] * tex_scale_s1;
+            f->w.v1 = t[1] * tex_scale_t1;
+        } else {
+            f->w.u1 = fs1;
+            f->w.v1 = ft1;
+        }
+        f->fu1 = f->w.u1 > -1e9f && f->w.u1 < 1e9f ? mga_ifloor(f->w.u1) : NO_FLOOR;
+        f->fv1 = f->w.v1 > -1e9f && f->w.v1 < 1e9f ? mga_ifloor(f->w.v1) : NO_FLOOR;
+    } else
+        f->w.u1 = f->w.v1 = 0;
     return f;
 }
 
@@ -861,6 +874,20 @@ static void put8(uint32_t *d, const mga_wvtx *w, uint32_t bgra, int32_t su, int3
     d[5] = w->spec;
     memcpy(d + 6, &u, 4);
     memcpy(d + 7, &v, 4);
+}
+
+/* The same for the T2 pipes: map 1's coordinates after, moved by their own
+ * whole periods. */
+static void put10(uint32_t *d, const mga_wvtx *w, uint32_t bgra, int32_t su, int32_t sv, int32_t su1, int32_t sv1)
+{
+    float u = w->u1, v = w->v1;
+    put8(d, w, bgra, su, sv);
+    if (su1)
+        u = w->u1 - (float)su1;
+    if (sv1)
+        v = w->v1 - (float)sv1;
+    memcpy(d + 8, &u, 4);
+    memcpy(d + 9, &v, 4);
 }
 
 /* warp_wrap on three vertices already in the DMA stream: f[idx] of each
@@ -921,8 +948,8 @@ static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
         int dw;
         uint32_t *d = warp_reserve(3, &dw);
         if (d) {                                /* straight into the DMA stream */
-            int32_t su = 0, sv = 0;
-            int whole = dw == 8;
+            int32_t su = 0, sv = 0, su1 = 0, sv1 = 0;
+            int whole = dw == (dual ? 10 : 8);
             if (textured == 1 && whole) {
                 if (!tstate.clamp_u) {
                     su = min3i(a->fu, b->fu, c->fu);
@@ -933,11 +960,27 @@ static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
                     whole = whole && a->fv != NO_FLOOR && b->fv != NO_FLOOR && c->fv != NO_FLOOR;
                 }
             }
+            if (dual && whole) {
+                if (!tstate1.clamp_u) {
+                    su1 = min3i(a->fu1, b->fu1, c->fu1);
+                    whole = whole && a->fu1 != NO_FLOOR && b->fu1 != NO_FLOOR && c->fu1 != NO_FLOOR;
+                }
+                if (!tstate1.clamp_v) {
+                    sv1 = min3i(a->fv1, b->fv1, c->fv1);
+                    whole = whole && a->fv1 != NO_FLOOR && b->fv1 != NO_FLOOR && c->fv1 != NO_FLOOR;
+                }
+            }
             if (whole) {                        /* each word written once, in order */
                 int fl = dgl_gl.shade_model == GL_FLAT;
-                put8(d, &a->w, fl ? flat : a->w.bgra, su, sv);
-                put8(d + 8, &b->w, fl ? flat : b->w.bgra, su, sv);
-                put8(d + 16, &c->w, fl ? flat : c->w.bgra, su, sv);
+                if (dual) {
+                    put10(d, &a->w, fl ? flat : a->w.bgra, su, sv, su1, sv1);
+                    put10(d + 10, &b->w, fl ? flat : b->w.bgra, su, sv, su1, sv1);
+                    put10(d + 20, &c->w, fl ? flat : c->w.bgra, su, sv, su1, sv1);
+                } else {
+                    put8(d, &a->w, fl ? flat : a->w.bgra, su, sv);
+                    put8(d + 8, &b->w, fl ? flat : b->w.bgra, su, sv);
+                    put8(d + 16, &c->w, fl ? flat : c->w.bgra, su, sv);
+                }
                 warp_commit(3);
                 warp_since_cpu = 1;
                 return;
@@ -953,6 +996,12 @@ static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
                 if (!tstate.clamp_v)
                     wrap_dw((float *)d, dw, 7);
             }
+            if (dual && dw == 10) {
+                if (!tstate1.clamp_u)
+                    wrap_dw((float *)d, dw, 8);
+                if (!tstate1.clamp_v)
+                    wrap_dw((float *)d, dw, 9);
+            }
             warp_commit(3);
             warp_since_cpu = 1;
             return;
@@ -963,6 +1012,8 @@ static void fast_tri(GLint ia, GLint ib, GLint ic, GLint ip)
         w[0].bgra = w[1].bgra = w[2].bgra = flat;
     if (textured)
         warp_wrap(w, 0, &tstate);
+    if (dual)
+        warp_wrap(w, 1, &tstate1);
     if (warp_vertices(w, 3) == 0) {
         warp_since_cpu = 1;
         return;
@@ -986,9 +1037,9 @@ static int seq_kinds = 7;               /* DGL_SEQ: 1 fans and polygons, 2 strip
 static int fast_seq(GLenum mode, GLsizei count, const GLint *idx, GLint first)
 {
     static mga_wvtx sw[SEQ_MAX];        /* (copies: a slot may be refilled within the sequence) */
-    static int32_t sx[SEQ_MAX], sy[SEQ_MAX], sfu[SEQ_MAX], sfv[SEQ_MAX];
+    static int32_t sx[SEQ_MAX], sy[SEQ_MAX], sfu[SEQ_MAX], sfv[SEQ_MAX], sfu1[SEQ_MAX], sfv1[SEQ_MAX];
     const int fan = mode != GL_TRIANGLE_STRIP, flat = dgl_gl.shade_model == GL_FLAT;
-    int32_t su = 0, sv = 0;
+    int32_t su = 0, sv = 0, su1 = 0, sv1 = 0;
     uint32_t *d;
     GLsizei i;
     int dw;
@@ -1003,6 +1054,7 @@ static int fast_seq(GLenum mode, GLsizei count, const GLint *idx, GLint first)
         sw[i] = f->w;
         sx[i] = f->X16; sy[i] = f->Y16;
         sfu[i] = f->fu; sfv[i] = f->fv;
+        sfu1[i] = f->fu1; sfv1[i] = f->fv1;
     }
     for (i = 0; i + 2 < count; i++) {   /* fast_tri's triangles: none zero in area, none culled */
         const int a = fan ? 0 : (i & 1) ? i + 1 : i, b = fan ? i + 1 : (i & 1) ? i : i + 1, c = i + 2;
@@ -1029,11 +1081,29 @@ static int fast_seq(GLenum mode, GLsizei count, const GLint *idx, GLint first)
                 if (sfv[i] < sv) sv = sfv[i];
             }
     }
+    if (dual) {
+        if (!tstate1.clamp_u)
+            for (su1 = sfu1[0], i = 0; i < count; i++) {
+                if (sfu1[i] == NO_FLOOR)
+                    return 0;
+                if (sfu1[i] < su1) su1 = sfu1[i];
+            }
+        if (!tstate1.clamp_v)
+            for (sv1 = sfv1[0], i = 0; i < count; i++) {
+                if (sfv1[i] == NO_FLOOR)
+                    return 0;
+                if (sfv1[i] < sv1) sv1 = sfv1[i];
+            }
+    }
     d = warp_reserve_seq(fan, (int)count, &dw);
     if (!d)
         return 0;
-    for (i = 0; i < count; i++)
-        put8(d + 8 * i, &sw[i], flat ? sw[0].bgra : sw[i].bgra, su, sv);
+    if (dw == 10)
+        for (i = 0; i < count; i++)
+            put10(d + 10 * i, &sw[i], flat ? sw[0].bgra : sw[i].bgra, su, sv, su1, sv1);
+    else
+        for (i = 0; i < count; i++)
+            put8(d + 8 * i, &sw[i], flat ? sw[0].bgra : sw[i].bgra, su, sv);
     warp_commit_seq((int)count);
     warp_since_cpu = 1;
     dgl_prims.tris_in += (unsigned)(count - 2);
@@ -1044,7 +1114,9 @@ static int fast_seq(GLenum mode, GLsizei count, const GLint *idx, GLint first)
 static int emit_fast(GLenum mode, GLsizei count, const GLint *idx, GLint first)
 {
     GLsizei i;
-    if (!warp_now || !dgl_gl.tex_identity || dual || map0_unit ||
+    if (!warp_now || !dgl_gl.tex_identity || map0_unit ||
+        (dual && (map1_copy || !dgl_gl.tex1_identity ||
+                  (dgl_pl_t1.on && (dgl_pl_t1.type != GL_FLOAT || dgl_pl_t1.size < 2)))) ||
         (dgl_gl.offset_fill && (dgl_gl.offset_factor != 0.0f || dgl_gl.offset_units != 0.0f)) ||
         dgl_pl_v.type != GL_FLOAT || dgl_pl_v.size < 3 ||
         (dgl_pl_c.on && dgl_pl_c.type != GL_UNSIGNED_BYTE && dgl_pl_c.type != GL_FLOAT) ||
@@ -1068,6 +1140,8 @@ static int emit_fast(GLenum mode, GLsizei count, const GLint *idx, GLint first)
             (byte_of(dgl_gl.cur_color[0] * 255.0f) << 16) | (byte_of(dgl_gl.cur_color[3] * 255.0f) << 24);
     fs0 = dgl_gl.cur_tex[0] * tex_scale_s;
     ft0 = dgl_gl.cur_tex[1] * tex_scale_t;
+    fs1 = dgl_gl.cur_tex1[0] * tex_scale_s1;
+    ft1 = dgl_gl.cur_tex1[1] * tex_scale_t1;
 #define I(k) (idx ? idx[k] : first + (k))
     switch (mode) {
     case GL_TRIANGLES:
