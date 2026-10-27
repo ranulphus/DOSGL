@@ -209,6 +209,13 @@ int dgl_glos_open(dgl_glos_layout *l)
     l->heap_end = l->heap_off + b;
     l->vram_bytes = g.vram;
     dgl_glos.on = 1;
+    /* No WARP in a window: GLOS takes the engine back in any DOS or GLOS
+     * call, and its HAL waits for an idle STATUS, which the WARPs can show
+     * with triangles of the program's still to be drawn: those then landed
+     * on GLOS's target (conformance t27 in a window on bench-g400 copied an
+     * empty frame). Until GLOS fences the WARPs at a hand-over, the CPU
+     * sets triangles up here. */
+    dgl_emit_no_warp();
     (void)a;
     return 0;
 }

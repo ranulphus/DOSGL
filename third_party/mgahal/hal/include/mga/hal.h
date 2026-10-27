@@ -125,7 +125,14 @@ void     engine_init(int pitch_px, int bpp);
 void     engine_resync(void);
 int      engine_sync(uint32_t timeout_us);     /* 0 ok, -1 timeout (engine reset) */
 int      engine_idle(void);                    /* 1 when the FIFO is empty and the engine idle (no wait) */
+/* A soft reset of the drawing engine (and the WARPs): every drawing
+ * register goes back to its reset value. The HAL writes back what it owns
+ * (the target, the clip and the MACCESS flags); callers write the rest. */
 void     engine_reset(void);
+/* What OPMODE holds, for the modules that write it (engine.c's ILOAD,
+ * warp.c's vertices); MGA_OPMODE_UNKNOWN after a reset or a change of hands. */
+#define MGA_OPMODE_UNKNOWN 0xFFFFFFFFu
+extern uint32_t mga_opmode;
 void     engine_set_target(const mga_target *t);
 void     engine_set_maccess_flags(uint32_t flags);     /* MACCESS_NODITHER / MACCESS_FOGEN */
 void     engine_set_clip(int x0, int y0, int x1, int y1);   /* inclusive-exclusive */
@@ -195,6 +202,8 @@ int      engine_in_vblank(void);
 uint32_t engine_vcount(void);
 extern const mga_target *engine_target;
 extern uint32_t engine_resets, engine_timeouts;
+extern uint32_t engine_timeout_diag[8];  /* the first engine_sync timeout's registers (engine.c) */
+extern uint32_t engine_fence_stuck;      /* WARP fences DWGSYNC never took, let go (engine.c) */
 /* The engine state the HAL owns (target, clip, MACCESS flags), saved and
  * restored around work that borrows the engine, such as engine_present. */
 typedef struct { mga_target t; int clip[4]; uint32_t maccess_flags; } mga_engine_state;
@@ -251,6 +260,23 @@ void fifo_reset(void);
 /* fifo_reserve's fast path, inline: most reservations fit the slots the
  * last FIFOSTATUS read found free, and cost no call. */
 extern int mga_fifo_free;
+/* Vertices that warp.c has buffered for, or is sending by, bus-master DMA:
+ * fifo_reserve (and so every register write's reservation) and engine_sync
+ * call mga_dma_flush first, which sends them and waits until the chip has
+ * fetched them, so register writes never overtake them. warp.c keeps
+ * mga_fifo_free at 0 while they are pending, which sends fifo_need to
+ * fifo_reserve. */
+extern int mga_dma_pending;
+extern void (*mga_dma_flush)(void);
+/* WARP triangles sent since the engine was last idle (warp.c sets it,
+ * engine_sync clears it). On a G400 the clip registers do not wait for
+ * them: emit_clip puts the DRM's barrier in front of a new clip. */
+extern int mga_warp_pending;
+/* Called by engine_reset after the soft reset (warp.c's DMA stream). */
+extern void (*mga_reset_hook)(void);
+/* DWGSYNC's tags: a new one, and the last given (one sequence). */
+uint32_t mga_dwgsync_next(void);
+uint32_t mga_dwgsync_last(void);
 MGA_INLINE void fifo_need(int n)
 {
     if (mga_fifo_free >= n)

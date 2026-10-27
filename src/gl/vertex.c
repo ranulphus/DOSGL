@@ -80,6 +80,12 @@ static int type_size(GLenum t)
     }
 }
 
+#define UBF1(i) ((float)(i) / 255.0f)
+#define UBF4(i) UBF1(i), UBF1((i) + 1), UBF1((i) + 2), UBF1((i) + 3)
+#define UBF16(i) UBF4(i), UBF4((i) + 4), UBF4((i) + 8), UBF4((i) + 12)
+#define UBF64(i) UBF16(i), UBF16((i) + 16), UBF16((i) + 32), UBF16((i) + 48)
+const float dgl_ub_f[256] = { UBF64(0), UBF64(64), UBF64(128), UBF64(192) };
+
 static void read_comps(const dgl_array *a, GLint i, float *out, int n, int normalise)
 {
     const unsigned char *p = (const unsigned char *)dgl_buffer_address(a->buf, a->ptr) +
@@ -91,7 +97,7 @@ static void read_comps(const dgl_array *a, GLint i, float *out, int n, int norma
         case GL_DOUBLE: out[k] = (float)((const double *)p)[k]; break;
         case GL_SHORT: out[k] = ((const short *)p)[k]; break;
         case GL_INT: out[k] = (float)((const int *)p)[k]; break;
-        case GL_UNSIGNED_BYTE: out[k] = normalise ? p[k] / 255.0f : p[k]; break;
+        case GL_UNSIGNED_BYTE: out[k] = normalise ? DGL_UB(p[k]) : p[k]; break;
         }
     }
 }
@@ -131,7 +137,89 @@ void dgl_transform(const dgl_vin *in, dgl_cvtx *o)
 
 void dgl_fetch_vertex(GLint i, dgl_vin *v);
 
-static void fetch(GLint i, dgl_vin *v) { dgl_fetch_vertex(i, v); }
+/* The arrays resolved once a draw (assemble): each one's first element and
+ * stride, so a vertex is fetched without dgl_buffer_address, type_size and a
+ * type switch for every component. The values are read_comps's. */
+typedef dgl_aplan aplan;
+dgl_aplan dgl_pl_v, dgl_pl_c, dgl_pl_t, dgl_pl_t1;
+#define pl_v dgl_pl_v
+#define pl_c dgl_pl_c
+#define pl_t dgl_pl_t
+#define pl_t1 dgl_pl_t1
+
+static void plan_one(const dgl_array *a, int on, aplan *o)
+{
+    o->on = on;
+    if (!on)
+        return;
+    o->p = (const unsigned char *)dgl_buffer_address(a->buf, a->ptr);
+    o->stride = a->stride ? (size_t)a->stride : (size_t)(a->size * type_size(a->type));
+    o->type = a->type;
+    o->size = a->size;
+}
+
+/* Immediate mode's vertices (glEnd) as arrays, for the fast path: the
+ * values fetch() would read from them are these. */
+static void plan_imm(const dgl_vin *v)
+{
+    pl_v.p = (const unsigned char *)v->pos; pl_v.stride = sizeof *v; pl_v.type = GL_FLOAT; pl_v.size = 4; pl_v.on = 1;
+    pl_c.p = (const unsigned char *)v->col; pl_c.stride = sizeof *v; pl_c.type = GL_FLOAT; pl_c.size = 4; pl_c.on = 1;
+    pl_t.p = (const unsigned char *)v->tex; pl_t.stride = sizeof *v; pl_t.type = GL_FLOAT; pl_t.size = 2; pl_t.on = 1;
+    pl_t1.p = (const unsigned char *)v->tex1; pl_t1.stride = sizeof *v; pl_t1.type = GL_FLOAT; pl_t1.size = 2;
+    pl_t1.on = 1;
+}
+
+static void plan_arrays(void)
+{
+    plan_one(&dgl_gl.va, 1, &pl_v);
+    plan_one(&dgl_gl.ca, dgl_gl.ca.enabled, &pl_c);
+    plan_one(&dgl_gl.ta, dgl_gl.ta.enabled, &pl_t);
+    plan_one(&dgl_gl.ta1, dgl_gl.ta1.enabled, &pl_t1);
+}
+
+static void read_plan(const aplan *a, GLint i, float *out, int n, int normalise)
+{
+    const unsigned char *p = a->p + (size_t)i * a->stride;
+    int k, m = n < a->size ? n : a->size;
+    switch (a->type) {
+    case GL_FLOAT:
+        for (k = 0; k < m; k++) out[k] = ((const float *)p)[k];
+        break;
+    case GL_DOUBLE:
+        for (k = 0; k < m; k++) out[k] = (float)((const double *)p)[k];
+        break;
+    case GL_SHORT:
+        for (k = 0; k < m; k++) out[k] = ((const short *)p)[k];
+        break;
+    case GL_INT:
+        for (k = 0; k < m; k++) out[k] = (float)((const int *)p)[k];
+        break;
+    case GL_UNSIGNED_BYTE:
+        for (k = 0; k < m; k++) out[k] = normalise ? DGL_UB(p[k]) : p[k];
+        break;
+    }
+}
+
+static void fetch(GLint i, dgl_vin *v)
+{
+    v->pos[0] = v->pos[1] = v->pos[2] = 0; v->pos[3] = 1;
+    read_plan(&pl_v, i, v->pos, 4, 0);
+    if (pl_c.on) {
+        v->col[3] = 1;
+        read_plan(&pl_c, i, v->col, 4, 1);
+    } else
+        memcpy(v->col, dgl_gl.cur_color, sizeof v->col);
+    if (pl_t.on) {
+        v->tex[0] = v->tex[1] = 0;
+        read_plan(&pl_t, i, v->tex, 2, 0);
+    } else
+        memcpy(v->tex, dgl_gl.cur_tex, sizeof v->tex);
+    if (pl_t1.on) {
+        v->tex1[0] = v->tex1[1] = 0;
+        read_plan(&pl_t1, i, v->tex1, 2, 0);
+    } else
+        memcpy(v->tex1, dgl_gl.cur_tex1, sizeof v->tex1);
+}
 
 void dgl_fetch_vertex(GLint i, dgl_vin *v)
 {
@@ -203,6 +291,11 @@ static void tri(GLint a, GLint b, GLint c, GLint prov, const dgl_vin *imm)
 #undef CLASH
 }
 
+void dgl_tri_general(GLint a, GLint b, GLint c, GLint provoking)
+{
+    tri(a, b, c, provoking, NULL);
+}
+
 static void line(GLint a, GLint b, const dgl_vin *imm)
 {
     dgl_cvtx v0 = *get(a, imm), v1 = *get(b, imm);
@@ -231,6 +324,15 @@ static void assemble(GLenum mode, GLsizei count, const GLint *idx, GLint first, 
             dgl_prims.skipped++;
             return;
         }
+    }
+    if (imm)
+        plan_imm(imm);
+    else
+        plan_arrays();
+    if (dgl_sink.fast && dgl_sink.fast(mode, count, idx, first)) {     /* (a list's: indices into its vertices) */
+        if (dgl_sink.end)
+            dgl_sink.end();
+        return;
     }
     switch (mode) {
     case GL_TRIANGLES:
@@ -412,6 +514,6 @@ void APIENTRY glColor4f(GLfloat r, GLfloat g, GLfloat b, GLfloat a)
 void APIENTRY glColor3f(GLfloat r, GLfloat g, GLfloat b) { glColor4f(r, g, b, 1.0f); }
 void APIENTRY glColor4ub(GLubyte r, GLubyte g, GLubyte b, GLubyte a)
 {
-    glColor4f(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
+    glColor4f(DGL_UB(r), DGL_UB(g), DGL_UB(b), DGL_UB(a));
 }
 void APIENTRY glColor3ub(GLubyte r, GLubyte g, GLubyte b) { glColor4ub(r, g, b, 255); }

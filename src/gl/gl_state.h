@@ -161,4 +161,11 @@ int dgl_clip_polygon(const dgl_cvtx *in, int n, dgl_cvtx *out, float gx, float g
 /* Outcode of one vertex against the same planes (0 = inside all). */
 unsigned dgl_outcode(const dgl_cvtx *v, float gx, float gy);
 
+/* i / 255.0f for each byte (vertex.c): the quotients, not their products
+ * with 1/255, without a divide. (i / 255 repeats i's eight bits forever, so
+ * it is never halfway between two floats: the table's constants are the
+ * divides' results at any x87 precision.) */
+extern const float dgl_ub_f[256];
+#define DGL_UB(c) (dgl_ub_f[(unsigned char)(c)])
+
 #endif

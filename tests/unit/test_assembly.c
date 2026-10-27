@@ -71,6 +71,13 @@ void unit_run(void)
         CHECK(tris[63][0] == 0 && tris[63][1] == 64 && tris[63][2] == 65 && tris[63][3] == 65);
         glVertexPointer(3, GL_FLOAT, 0, pos);
     }
+    /* dgl_ub_f: each byte's quotient by 255, as the divide gives it. */
+    for (i = 0; i < 256; i++) {
+        volatile float num = (float)i, q = num / 255.0f;
+        CHECK(memcmp((const void *)&q, &dgl_ub_f[i], sizeof q) == 0);
+    }
+    glColor4ub(0, 51, 128, 255);
+    CHECK(dgl_gl.cur_color[0] == 0.0f && dgl_gl.cur_color[3] == 1.0f && dgl_gl.cur_color[1] == 0.2f);
     /* Errors. */
     glBegin(GL_TRIANGLES); glBegin(GL_TRIANGLES);
     CHECK(glGetError() == GL_INVALID_OPERATION);

@@ -21,7 +21,7 @@ Q ?= @
 DJENV := env LD_LIBRARY_PATH=$(DJGPP_PREFIX)/hostlib
 DJCC  := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-gcc
 DJAR  := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-ar
-DJ_CFLAGS := -std=gnu99 -O2 -march=i586 -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include \
+DJ_CFLAGS := -std=gnu99 -O2 -march=i586 -mtune=pentium2 -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include \
              -DMGA_DJGPP=1 -DDGL_BUILD_ID='"$(BUILD_ID)"'
 DJ_TESTFLAGS := -I$(MGAHAL)/tests/shim -DHX_BUILD_ID='"$(BUILD_ID)"'
 # PROF=1: the whole tree with stage timers (MGA_PROF, hal/include/mga/prof.h):
@@ -34,7 +34,7 @@ endif
 
 # The shared HAL (PRD D15) goes into libGL.a so consumers link only -lGL.
 HAL_SRCS := $(addprefix $(MGAHAL)/hal/,src/debug/serial.c src/pci.c src/chip.c src/vbe.c src/fifo.c \
-              src/engine.c src/dac.c src/texhw.c src/present.c src/debug/regtrace.c src/setup/trap.c port/djgpp.c)
+              src/engine.c src/dac.c src/texhw.c src/present.c src/debug/regtrace.c src/setup/trap.c src/warp.c port/djgpp.c)
 DGL_SRCS := $(wildcard src/dgl/*.c) $(wildcard src/gl/*.c)
 LIB := build/lib/libGL.a
 
@@ -71,7 +71,7 @@ $(LIB): $(DGL_SRCS:%.c=build/djgpp/%.o) $(GEN_SRCS:%.c=build/djgpp/%.o) $(HAL_SR
 lib: $(LIB)
 
 # Examples: one directory each, linked with the guest test shim (HX- lines).
-EXAMPLES := hello probe clear tri cube texcube g4exp resgl
+EXAMPLES := hello probe clear tri cube texcube g4exp texexp resgl
 build/exe/%.EXE: $(LIB) $(MGAHAL)/tests/shim/hx.c
 	@mkdir -p $(dir $@)
 	$(Q)echo "  DJLD    $@"
@@ -85,6 +85,7 @@ build/exe/TRI.EXE: $(wildcard examples/tri/*.c) src/dgl/dgl.h
 build/exe/CUBE.EXE: $(wildcard examples/cube/*.c)
 build/exe/TEXCUBE.EXE: $(wildcard examples/texcube/*.c) examples/common/texscene.h
 build/exe/G4EXP.EXE: $(wildcard examples/g4exp/*.c) src/dgl/dgl.h src/gl/gl_tex.h
+build/exe/TEXEXP.EXE: $(wildcard examples/texexp/*.c)
 build/exe/RESGL.EXE: $(wildcard examples/resgl/*.c)
 examples: $(foreach e,$(EXAMPLES),build/exe/$(shell echo $(e) | tr a-z A-Z).EXE)
 

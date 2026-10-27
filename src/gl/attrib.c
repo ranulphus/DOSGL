@@ -14,7 +14,7 @@ void dgl_imm_vertex(float x, float y, float z, float w);     /* vertex.c */
 #define SB(c) ((2.0f * (float)(c) + 1.0f) / 255.0f)
 #define SS(c) ((2.0f * (float)(c) + 1.0f) / 65535.0f)
 #define SI(c) ((float)((2.0 * (double)(c) + 1.0) / 4294967295.0))
-#define UB(c) ((float)(c) / 255.0f)
+#define UB(c) DGL_UB(c)
 #define US(c) ((float)(c) / 65535.0f)
 #define UI(c) ((float)((double)(c) / 4294967295.0))
 
