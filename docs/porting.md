@@ -87,15 +87,17 @@ dglShutdown();
   - `DGL_VSYNC=0` or `1` overrides the program's choice of swap on retrace.
   - `DGL_WARP=0` sets every triangle up on the CPU on a G400 or G450, which otherwise use the chip's WARP
     setup engine with vertices by bus-master DMA (MGA-Glide `docs/g400-warp.md`). At exit a
-    `DGL-WARP tris= failures= kicks= ring= resets= timeouts=` line counts its triangles, failures (each one sends
-    the rest to the CPU) and DMA transfers, says what the rings were (1 cached, PCI; 2 write-combining, PCI; 3
-    write-combining fetched by AGP; and their size), and counts the engine's resets and timed-out waits. `DGL_WARPDMA=0` sends the WARP's vertices by the CPU through
+    `DGL-WARP tris= failures= kicks= ring= resets= timeouts= seqs=` line counts its triangles, failures (each one
+    sends the rest to the CPU) and DMA transfers, says what the rings were (1 cached, PCI; 2 write-combining, PCI; 3
+    write-combining fetched by AGP; and their size), counts the engine's resets and timed-out waits, and the
+    strips and fans sent whole (all / with two textures). `DGL_WARPDMA=0` sends the WARP's vertices by the CPU through
     the DMA window instead of the DMA command stream.
   - `DGL_AGP=0` keeps the DMA rings cached and fetched by PCI under GLOS too, which otherwise makes them
     write-combining (API 1.4) and turns AGP on. `DGL_RING=bytes` (256 KB) and `DGL_KICK=bytes` (6 KB of
     vertices between kicks) tune the rings.
   - `DGL_FAST=0` turns off the fast path: triangles from vertex arrays, immediate mode and display lists straight
-    to the WARP (no fog, texture matrix, polygon offset or second map), each vertex transformed and projected once.
+    to the WARP (no texture matrix, polygon offset or remapped unit; two textures on the G400 and G450 when unit 1
+    has its own), each vertex transformed and projected once.
     On it, a fan, polygon or strip of 5 to 64 vertices goes as one sequence of the WARPs' (each vertex once in the
     DMA stream) when all of its triangles would be drawn; `DGL_SEQ=0` sends triangles instead (1 fans and polygons,
     2 strips, 4 flat polygons; 7 by default). `DGL-PRIMS ... seqs=` counts them.
