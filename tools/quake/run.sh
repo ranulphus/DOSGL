@@ -5,8 +5,9 @@
 #
 #   GAME   quake | lq    Quake on the retail or the LibreQuake data: timedemo
 #                        DEMO (default demo1) with -fixedtime, to its end
-#          quake2        Quake 2: with DEMO (a demo recorded by q2record.sh),
-#                        that timedemo with fixedtime 14; without, map base1
+#          quake2        Quake 2: with DEMO (demo1 or demo2, id's own in the
+#                        retail pak0.pak, or one recorded by q2record.sh), that
+#                        timedemo with fixedtime 14; without, map base1
 #                        for FRAMES swaps
 #   CARD   g450 (default), g400 or g200
 # The timedemo result ("demo frames seconds fps", or "frames seconds fps" for
@@ -46,8 +47,11 @@ case $game in
     extra=()
     if [ -n "${DEMO:-}" ]; then
       up=$(echo "$DEMO" | tr a-z A-Z)
-      [ -f "$demos/$up.DM2" ] || { echo "run.sh: no $demos/$up.DM2 (tools/quake/q2record.sh $DEMO)" >&2; exit 1; }
-      extra=(--file "$demos/$up.DM2=D:/QUAKE2/BASEQ2/DEMOS/$up.DM2")
+      case $DEMO in
+        demo1|demo2) ;;                 # id's, in the retail pak0.pak (release protocol 26: q2dos plays them)
+        *) [ -f "$demos/$up.DM2" ] || { echo "run.sh: no $demos/$up.DM2 (tools/quake/q2record.sh $DEMO)" >&2; exit 1; }
+           extra=(--file "$demos/$up.DM2=D:/QUAKE2/BASEQ2/DEMOS/$up.DM2") ;;
+      esac
       def="+set gl_mode 3 +set s_initsound 0 +set timedemo 1 +set fixedtime 14 +set td_result C:/OUT/TD.TXT +set td_quit 1 +demomap $DEMO.dm2"
       frames=${FRAMES:-0}
     else
