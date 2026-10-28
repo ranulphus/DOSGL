@@ -10,16 +10,21 @@
  * waiting for the engine: a texture drawn since the last engine sync (busy)
  * is re-uploaded into a new block (rename-on-write) while its old block is
  * retired until the next sync, and glTexSubImage2D writes just the rectangle
- * when the texture is not busy and the new texels fit its format. When VRAM
+ * when the new texels fit its format (into a new block, the engine copying
+ * the rest, when the texture is busy). When VRAM
  * runs out, the least recently drawn textures are evicted (their shadow
  * copies bring them back). */
 #include "gl_tex.h"
 #include "../dgl/dgl.h"
 #include "mga/mmio.h"                  /* mga_cmd_open */
+#include "mga/sys.h"                   /* sys_time_us */
 #include <stdlib.h>
 #include <string.h>
 
 #define MAX_TEXTURES 4096
+/* DGL_FRAMES (ftrace.c): the time spent here, a frame at a time. */
+#define FT_START() uint32_t ft0 = dgl_ftrace_on ? sys_time_us() : 0
+#define FT_END() do { if (dgl_ftrace_on) dgl_ftrace_tex_us += sys_time_us() - ft0; } while (0)
 #define WINDOW_LEVELS 5
 
 static dgl_texture *tex[MAX_TEXTURES];
@@ -39,6 +44,7 @@ static int white_ok;
 static int tlut_mode;
 static int iload_mode;             /* DGL_ILOAD: 0 CPU writes only, 1 ILOAD, -1 (default) ILOAD
                                        unless the WARPs' DMA stream is open (sub_iload) */
+static int move_mode;              /* DGL_TEXMOVE: 0 waits for the engine instead (sub_move) */
 static uint32_t lut_off;
 static int lut_ok;
 static const dgl_palette *lut_pal;
@@ -219,6 +225,8 @@ void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end)
         tlut_mode = !mga.has_tlut ? 0 : e && *e ? (*e != '0') : !mga.has_dual_tex;
         e = getenv("DGL_ILOAD");
         iload_mode = e && *e ? (*e != '0') : -1;
+        e = getenv("DGL_TEXMOVE");
+        move_mode = !(e && *e == '0');
     }
     if (white_ok) {
         volatile uint16_t *p = (volatile uint16_t *)(mga_fb + white_off);
@@ -606,6 +614,8 @@ static int texels_class(const dgl_level *L, const dgl_palette *pal, size_t i, lo
 {
     int cls = DGL_ALPHA_OPAQUE;
     long k;
+    if (!L->idx && (L->ifc == DGL_IF_RGB || L->ifc == DGL_IF_LUMINANCE))
+        return DGL_ALPHA_OPAQUE;                 /* (dgl_apply_ifmt made every alpha 1) */
     if (!L->idx)
         return dgl_alpha_class(L->rgba + i * 4, n);
     for (k = 0; k < n; k++) {
@@ -625,6 +635,7 @@ void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat, GLs
     dgl_texture *t;
     dgl_level *L;
     int max = mga.max_tex_size ? mga.max_tex_size : 1024, ifc = dgl_ifmt_class(internalformat);
+    FT_START();
     PROF_SCOPE(PROF_D_TEX);
     DGL_GPU_QUIET();                            /* (the texels into the shadow copy: the CPU's work) */
     if (!check_upload(target, level, format, type))
@@ -661,6 +672,7 @@ void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat, GLs
     }
     t->dirty = 1;
     dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
+    FT_END();
 }
 
 static uint16_t pack(const dgl_texture *t, int hwfmt, const unsigned char *p)
@@ -673,11 +685,16 @@ static uint16_t pack(const dgl_texture *t, int hwfmt, const unsigned char *p)
 static void pack_span(const dgl_texture *t, int hwfmt, const dgl_level *L, const dgl_palette *pal, size_t src,
                       int n, uint32_t *row, int at)
 {
+    static uint16_t px[2048];
     int i;
     if (hwfmt == DGL_TW8)
         for (i = 0; i < n; i++)
             row[(at + i) >> 2] |= (uint32_t)L->idx[src + i] << (((at + i) & 3) * 8);
-    else
+    else if (!L->idx && n <= 2048) {
+        dgl_pack_row(hwfmt, t->grey, L->rgba + src * 4, n, px);     /* (a row at once, by table) */
+        for (i = 0; i < n; i++)
+            row[(at + i) >> 1] |= (uint32_t)px[i] << (((at + i) & 1) * 16);
+    } else
         for (i = 0; i < n; i++)
             row[(at + i) >> 1] |= (uint32_t)pack(t, hwfmt, texel(L, pal, src + i)) << (((at + i) & 1) * 16);
 }
@@ -713,11 +730,56 @@ static int sub_iload(dgl_texture *t, int level, const dgl_palette *pal, int x, i
     return 1;
 }
 
+/* A texture that queued draws still read, moved to a new block rather than
+ * waited for: the CPU writes the changed rectangle there (sub_in_place) and
+ * the engine copies the rest from the old block, queued behind those draws
+ * (engine_vram_copy). The old block is retired until the next sync. GLQuake's
+ * multitexture path changes a lightmap page between the surfaces that use
+ * it, hundreds of times a second. Returns 1 if moved. */
+static int sub_move(dgl_texture *t, int level, int x, int y, int w, int h)
+{
+    const dgl_level *L = &t->level[level];
+    uint32_t bpt = t->hwfmt == DGL_TW8 ? 1 : 2, rowb = (uint32_t)L->w * bpt, old = t->vram_off, d, noff, at, end;
+    int full = x == 0 && w == L->w, ok, l;
+    if (!move_mode || !mga.has_dstorg || (!full && (rowb & 63u) != 0) || dgl_vram_alloc(t->vram_size, &noff) != 0)
+        return 0;
+    DGL_GPU_ENTER();
+    d = noff - old;                                     /* (modulo 2^32: either way) */
+    at = t->level_off[level] + (uint32_t)y * rowb;      /* the rectangle's first row */
+    end = at + (uint32_t)h * rowb;                      /* ... and the row after its last */
+    ok = engine_vram_move(noff, old, at - old) &&
+         (full || (engine_vram_copy(at + d, at, L->w, (int)bpt * 8, x, h) &&
+                   engine_vram_copy(at + d + (uint32_t)(x + w) * bpt, at + (uint32_t)(x + w) * bpt, L->w,
+                                    (int)bpt * 8, L->w - x - w, h))) &&
+         engine_vram_move(end + d, end, old + t->vram_size - end);
+    engine_vram_copy_end();
+    if (!ok) {                                          /* (some copies may be queued into it) */
+        if (dgl_vram_retire(noff) != 0) {
+            dgl_texc.syncs++;
+            dgl_sync();
+            dgl_vram_free(noff);
+        }
+        return 0;
+    }
+    if (dgl_vram_retire(old) != 0) {                    /* retire list full */
+        dgl_texc.syncs++;
+        dgl_sync();
+        dgl_vram_free(old);
+    }
+    t->vram_off = noff;
+    for (l = 0; l < t->hw_levels; l++)
+        t->level_off[l] += d;
+    dgl_texture_drawn(t);                               /* the queued copies write it */
+    dgl_texc.sub_move++;
+    return 1;
+}
+
 /* Write a changed rectangle straight into the hardware copy: only when the
  * copy is current, holds this level at its own size (not widened) and its
  * format can represent the new texels' alpha. Through the engine when it
- * can (sub_iload), else by the CPU once the engine no longer reads the
- * texture. Returns 1 if done. */
+ * can (sub_iload), else by the CPU: into a new block when queued draws
+ * still read the texture (sub_move), or once the engine no longer reads it.
+ * Returns 1 if done. */
 static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
 {
     static const int fits[] = { [DGL_TW16] = DGL_ALPHA_OPAQUE, [DGL_TW15] = DGL_ALPHA_BINARY,
@@ -737,7 +799,7 @@ static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
         return 0;
     if (sub_iload(t, level, pal, x, y, w, h))
         return 1;
-    if (dgl_texture_busy(t)) {
+    if (dgl_texture_busy(t) && !sub_move(t, level, x, y, w, h)) {
         /* Queued draws may still read it. A small rectangle is cheaper to
          * write after waiting for the engine than the whole texture is to
          * re-upload elsewhere (GLQuake's multitexture path updates a
@@ -759,10 +821,19 @@ static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
         return 1;
     }
     for (j = 0; j < h; j++) {
-        volatile uint16_t *dst = (volatile uint16_t *)(mga_fb + t->level_off[level]) + (size_t)(y + j) * hw_w + x;
-        size_t row = (size_t)(y + j) * L->w + x;
-        for (i = 0; i < w; i++)
-            dst[i] = pack(t, t->hwfmt, texel(L, pal, row + (size_t)i));
+        /* A row packed at once, then written two texels a write (the level's
+         * rows start on 4 bytes: its offset on 32, at least 8 texels wide). */
+        static uint32_t row[1025];
+        volatile uint8_t *d = mga_fb + t->level_off[level] + ((size_t)(y + j) * hw_w + (size_t)(x & ~1)) * 2;
+        int n = ((x & 1) + w + 1) >> 1;
+        memset(row, 0, (size_t)n * 4);
+        pack_span(t, t->hwfmt, L, pal, (size_t)(y + j) * L->w + x, w, row, x & 1);
+        if (x & 1)                                /* (the texel before stays as it is) */
+            ((volatile uint16_t *)d)[1] = (uint16_t)(row[0] >> 16);
+        for (i = x & 1; i < n - ((x + w) & 1); i++)
+            ((volatile uint32_t *)d)[i] = row[i];
+        if ((x + w) & 1)                          /* (and the one after) */
+            ((volatile uint16_t *)d)[2 * (n - 1)] = (uint16_t)row[n - 1];
     }
     dgl_texc.sub_fast++;
     return 1;
@@ -773,6 +844,7 @@ void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsi
 {
     dgl_texture *t;
     dgl_level *L;
+    FT_START();
     PROF_SCOPE(PROF_D_TEX);
     DGL_GPU_QUIET();                            /* (the texels into the shadow copy; the engine only if it loads them) */
     if (!check_upload(target, level, format, type))
@@ -802,6 +874,7 @@ void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsi
          * (bench-g400, G4EXP E6; docs/silicon-experiments.md). */
         dgl_gl.dirty |= DGL_DIRTY_TEXTURE;
     }
+    FT_END();
 }
 
 /* ---- Residency ------------------------------------------------------------ */
@@ -866,6 +939,8 @@ int dgl_texture_ready(dgl_texture *t)
     if (!t->dirty && t->resident &&
         (!pal || (t->pal_used == pal && (t->hwfmt == DGL_TW8 ? tlut_capable(pal) : t->pal_gen == pal->gen))))
         return 0;                                    /* a TW8 texture follows its palette through the LUT */
+    {
+    FT_START();
     /* The levels that go to the hardware: level 0, then while the chain halves
      * correctly and stays >= 8x8, up to the window and GL_TEXTURE_MAX_LEVEL. */
     if (mip_filter(t->min_filter) && mga.max_mip_levels > 1) {
@@ -906,6 +981,7 @@ int dgl_texture_ready(dgl_texture *t)
                          t->name, t->level[0].w, t->level[0].h, levels, (unsigned long)size,
                          (unsigned long)dgl_vram_used(), (unsigned long)dgl_vram_largest_free(), dgl_vram_blocks());
             dgl_gl_error(GL_OUT_OF_MEMORY);          /* the draw is skipped (PRD §8.3) */
+            FT_END();
             return -1;
         }
         t->vram_off = off;
@@ -928,5 +1004,7 @@ int dgl_texture_ready(dgl_texture *t)
     t->pal_gen = pal ? pal->gen : 0;
     t->dirty = 0;
     dgl_gl.dirty |= DGL_DIRTY_TEXTURE;               /* new VRAM offsets or format for the emitter */
+    FT_END();
     return 0;
+    }
 }

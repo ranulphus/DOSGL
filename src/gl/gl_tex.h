@@ -20,6 +20,9 @@ int      dgl_to_rgba(GLenum format, const unsigned char *src, long n, unsigned c
 int      dgl_ifmt_class(GLint internalformat);                 /* DGL_IF_*, -1 if not a GL 1.1 format */
 void     dgl_apply_ifmt(int ifc, unsigned char *rgba, long n);  /* keep what the class keeps */
 uint16_t dgl_pack_grey565(unsigned l);                          /* RGB565 grey, green from red */
+/* n RGBA8 texels in hwfmt (TW16, TW15, TW12), as dgl_pack_texel, or from red as
+ * dgl_pack_grey565 when grey and TW16. */
+void dgl_pack_row(int hwfmt, int grey, const unsigned char *rgba, long n, uint16_t *out);
 int      dgl_format_bytes(GLenum format);
 
 /* vram.c */
@@ -86,6 +89,7 @@ typedef struct {
     unsigned long sub_fast, sub_full;       /* glTexSubImage2D: rectangle written / whole re-upload */
     unsigned long sub_sync;                 /* rectangles written after waiting for the engine */
     unsigned long sub_iload;                /* rectangles written through the engine (ILOAD) */
+    unsigned long sub_move;                 /* of sub_fast, those into a new block (sub_move) */
     unsigned long lut_loads;                /* palettes loaded into the texture LUT (TW8) */
     unsigned long renames, evictions, syncs;
 } dgl_tex_counts;

@@ -37,6 +37,13 @@ void dgl_teardown(void);                  /* reset engine, text mode; safe to ca
 void dgl_note_exit(void);                 /* DGL-EXIT if DGL-START was printed */
 void dgl_snap_init(void);                 /* snap.c: read DGL_SNAP, DGL_SNAPDIR */
 void dgl_snap_frame(unsigned long swap);  /* capture if swap is listed */
+/* ftrace.c: DGL_FRAMES, a line per frame written at exit. */
+extern int dgl_ftrace_on;
+extern uint32_t dgl_ftrace_tex_us, dgl_ftrace_drain_us;   /* this frame's, so far */
+void dgl_ftrace_init(void);
+void dgl_ftrace_counts(void);             /* at a swap's start */
+void dgl_ftrace_frame(uint32_t t0);       /* at its end (t0: its start) */
+void dgl_ftrace_write(void);              /* at exit (not on a fault) */
 
 /* emit.c: install the hardware sinks for the vertex stream. */
 void dgl_emit_install(void);
