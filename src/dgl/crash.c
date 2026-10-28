@@ -55,6 +55,7 @@ static void on_fault(int exc, uint32_t err, uint32_t eip)
 
 static void on_exit_hook(void)
 {
+    dgl_ftrace_write();
     dgl_teardown();
 }
 

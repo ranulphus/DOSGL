@@ -376,6 +376,7 @@ static void after_init(const DGLConfig *cp)
             DGL_ERR("DGL-START %dx%d exit_after=%lu", c.width, c.height, exit_after);
         }
         dgl_snap_init();
+        dgl_ftrace_init();
         e = getenv("DGL_STATS");
         stats_on = e ? atoi(e) : 0;
         stats_t0 = sys_time_us();
@@ -392,6 +393,7 @@ static void after_init(const DGLConfig *cp)
 
 void dglShutdown(void)
 {
+    dgl_ftrace_write();
     dgl_teardown();
 }
 
@@ -550,19 +552,19 @@ static void retrace_wait(void)
         retrace_us += sys_time_us() - t0;
 }
 
-void dglSwapBuffers(void)
+static void swap_buffers(void)
 {
     uint32_t show;
-    if (!dgl_ctx.active)
-        return;
     PROF_SCOPE(PROF_D_SWAP);
 #ifdef __DJGPP__
     __djgpp_nearptr_enable();           /* the consumer may have turned near pointers off */
 #endif
-    if (stats_on) {
-        uint32_t t0 = sys_time_us();
+    if (stats_on || dgl_ftrace_on) {
+        uint32_t t0 = sys_time_us(), dt;
         drain_with_hook();              /* retired texture blocks go back to the heap */
-        drain_us += sys_time_us() - t0;
+        dt = sys_time_us() - t0;
+        drain_us += dt;
+        dgl_ftrace_drain_us += dt;
     } else
         drain_with_hook();
     stats.swaps++;
@@ -589,9 +591,10 @@ void dglSwapBuffers(void)
                         dgl_prims.begins, dgl_prims.skipped, dgl_prims.tris_in, dgl_prims.clipped,
                         dgl_prims.zero_area, dgl_prims.culled, dgl_prims.seqs);
                 memset(&dgl_prims, 0, sizeof dgl_prims);
-                DGL_ERR("DGL-TEX uploads=%lu kb=%lu sub_fast=%lu sub_sync=%lu sub_iload=%lu sub_full=%lu renames=%lu "
-                        "evictions=%lu syncs=%lu lut_loads=%lu", dgl_texc.uploads, dgl_texc.upload_bytes >> 10,
-                        dgl_texc.sub_fast, dgl_texc.sub_sync, dgl_texc.sub_iload, dgl_texc.sub_full, dgl_texc.renames,
+                DGL_ERR("DGL-TEX uploads=%lu kb=%lu sub_fast=%lu sub_sync=%lu sub_move=%lu sub_iload=%lu sub_full=%lu "
+                        "renames=%lu evictions=%lu syncs=%lu lut_loads=%lu", dgl_texc.uploads,
+                        dgl_texc.upload_bytes >> 10, dgl_texc.sub_fast, dgl_texc.sub_sync, dgl_texc.sub_move,
+                        dgl_texc.sub_iload, dgl_texc.sub_full, dgl_texc.renames,
                         dgl_texc.evictions, dgl_texc.syncs, dgl_texc.lut_loads);
                 memset(&dgl_texc, 0, sizeof dgl_texc);
             }
@@ -641,6 +644,20 @@ void dglSwapBuffers(void)
     dgl_ctx.front_is_a = !dgl_ctx.front_is_a;
     set_target();
     dgl_gl.dirty |= DGL_DIRTY_TARGET | DGL_DIRTY_RASTER;    /* the target write reset MACCESS */
+}
+
+void dglSwapBuffers(void)
+{
+    uint32_t t0 = 0;
+    if (!dgl_ctx.active)
+        return;
+    if (dgl_ftrace_on) {
+        t0 = sys_time_us();
+        dgl_ftrace_counts();
+    }
+    swap_buffers();
+    if (dgl_ftrace_on)
+        dgl_ftrace_frame(t0);
 }
 
 void dgl_retarget(void)
