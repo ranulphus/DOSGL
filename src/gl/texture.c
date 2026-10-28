@@ -15,6 +15,7 @@
  * copies bring them back). */
 #include "gl_tex.h"
 #include "../dgl/dgl.h"
+#include "mga/mmio.h"                  /* mga_cmd_open */
 #include <stdlib.h>
 #include <string.h>
 
@@ -36,7 +37,8 @@ static int white_ok;
  * only (the G400 specification says to expand 8-bit textures; untested on
  * silicon), 1 on any card that has one, 0 never. */
 static int tlut_mode;
-static int iload_mode;             /* DGL_ILOAD=0: sub-images by CPU writes only */
+static int iload_mode;             /* DGL_ILOAD: 0 CPU writes only, 1 ILOAD, -1 (default) ILOAD
+                                       unless the WARPs' DMA stream is open (sub_iload) */
 static uint32_t lut_off;
 static int lut_ok;
 static const dgl_palette *lut_pal;
@@ -216,7 +218,7 @@ void dgl_textures_reset(uint32_t heap_start, uint32_t heap_end)
         const char *e = getenv("DGL_TLUT");
         tlut_mode = !mga.has_tlut ? 0 : e && *e ? (*e != '0') : !mga.has_dual_tex;
         e = getenv("DGL_ILOAD");
-        iload_mode = !(e && *e == '0');
+        iload_mode = e && *e ? (*e != '0') : -1;
     }
     if (white_ok) {
         volatile uint16_t *p = (volatile uint16_t *)(mga_fb + white_off);
@@ -683,13 +685,18 @@ static void pack_span(const dgl_texture *t, int hwfmt, const dgl_level *L, const
 /* Write a rectangle of a level's hardware copy through the engine (ILOAD):
  * queued behind the draws that read the old texels, so neither a wait nor a
  * rename. Needs the HAL's pitch and alignment (level width a multiple of 32
- * texels, 64 for TW8). Returns 1 if done. */
+ * texels, 64 for TW8). Returns 1 if done. Not by default while the WARPs'
+ * DMA stream is open (a G400 or G450 drawing through the WARPs): there an
+ * ILOAD waits for the WARPs to finish first, as OPMODE may not leave general
+ * purpose while they work (the HAL's engine.c), and on bench-g400 CPU
+ * writes made GLQuake's demo1 faster (39.3 fps against 35.9; -mtex 33.0
+ * against 31.6). */
 static int sub_iload(dgl_texture *t, int level, const dgl_palette *pal, int x, int y, int w, int h)
 {
     static uint32_t row[1024];
     const dgl_level *L = &t->level[level];
     int tw8 = t->hwfmt == DGL_TW8, n, j;
-    if (!iload_mode || w > 2048)
+    if (!iload_mode || (iload_mode < 0 && mga_cmd_open) || w > 2048)
         return 0;
     DGL_GPU_ENTER();
     n = engine_iload_begin(t->level_off[level], L->w, tw8 ? 8 : 16, x, y, w, h);

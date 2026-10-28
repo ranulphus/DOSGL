@@ -4,6 +4,10 @@
  * those after it the new ones. Polygons and quads, flat and smooth. */
 #include "ct_tex.h"
 
+#ifndef T29_FRAME
+#define T29_FRAME "t29_0"           /* (t31 draws the same through ILOAD) */
+#endif
+
 static unsigned char patch[32 * 16 * 4];
 
 static void poly(float x, float y, float s0, float t0, int n, int flat)
@@ -56,5 +60,5 @@ void ct_run(void)
     }
     glShadeModel(GL_SMOOTH);
     glDisable(GL_TEXTURE_2D);
-    ct_frame("t29_0");
+    ct_frame(T29_FRAME);
 }
