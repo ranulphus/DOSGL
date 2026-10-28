@@ -20,6 +20,9 @@ int      dgl_to_rgba(GLenum format, const unsigned char *src, long n, unsigned c
 int      dgl_ifmt_class(GLint internalformat);                 /* DGL_IF_*, -1 if not a GL 1.1 format */
 void     dgl_apply_ifmt(int ifc, unsigned char *rgba, long n);  /* keep what the class keeps */
 uint16_t dgl_pack_grey565(unsigned l);                          /* RGB565 grey, green from red */
+/* n RGBA8 texels in hwfmt (TW16, TW15, TW12), as dgl_pack_texel, or from red as
+ * dgl_pack_grey565 when grey and TW16. */
+void dgl_pack_row(int hwfmt, int grey, const unsigned char *rgba, long n, uint16_t *out);
 int      dgl_format_bytes(GLenum format);
 
 /* vram.c */

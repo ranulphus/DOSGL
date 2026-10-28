@@ -36,6 +36,51 @@ uint16_t dgl_pack_texel(int hwfmt, unsigned r, unsigned g, unsigned b, unsigned 
     }
 }
 
+/* dgl_pack_texel's (and dgl_pack_grey565's) quantisations, by table: a row
+ * of texels in one pass (sub-images and uploads: GLQuake's -mtex changes
+ * lightmap rows hundreds of times a second). */
+static unsigned char q4t[256], q5t[256], q6t[256];
+static uint16_t greyt[256];
+static int tables_ready;
+
+static void tables(void)
+{
+    unsigned v;
+    for (v = 0; v < 256; v++) {
+        q4t[v] = (unsigned char)q(v, 4);
+        q5t[v] = (unsigned char)q(v, 5);
+        q6t[v] = (unsigned char)q(v, 6);
+        greyt[v] = dgl_pack_grey565(v);
+    }
+    tables_ready = 1;
+}
+
+void dgl_pack_row(int hwfmt, int grey, const unsigned char *rgba, long n, uint16_t *out)
+{
+    long i;
+    if (!tables_ready)
+        tables();
+    if (grey && hwfmt == DGL_TW16) {
+        for (i = 0; i < n; i++, rgba += 4)
+            out[i] = greyt[rgba[0]];
+        return;
+    }
+    switch (hwfmt) {
+    case DGL_TW16:
+        for (i = 0; i < n; i++, rgba += 4)
+            out[i] = (uint16_t)((q5t[rgba[0]] << 11) | (q6t[rgba[1]] << 5) | q5t[rgba[2]]);
+        break;
+    case DGL_TW15:
+        for (i = 0; i < n; i++, rgba += 4)
+            out[i] = (uint16_t)(((rgba[3] >= 128) << 15) | (q5t[rgba[0]] << 10) | (q5t[rgba[1]] << 5) | q5t[rgba[2]]);
+        break;
+    default:
+        for (i = 0; i < n; i++, rgba += 4)
+            out[i] = (uint16_t)((q4t[rgba[3]] << 12) | (q4t[rgba[0]] << 8) | (q4t[rgba[1]] << 4) | q4t[rgba[2]]);
+        break;
+    }
+}
+
 void dgl_convert_rgba(int hwfmt, const unsigned char *rgba, long n, uint16_t *out)
 {
     long i;
@@ -47,18 +92,18 @@ void dgl_convert_rgba(int hwfmt, const unsigned char *rgba, long n, uint16_t *ou
 int dgl_to_rgba(GLenum format, const unsigned char *src, long n, unsigned char *dst)
 {
     long i;
-    for (i = 0; i < n; i++, dst += 4) {
-        switch (format) {
-        case GL_RGBA: dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3]; src += 4; break;
-        case GL_BGRA_EXT: dst[0] = src[2]; dst[1] = src[1]; dst[2] = src[0]; dst[3] = src[3]; src += 4; break;
-        case GL_RGB: dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = 255; src += 3; break;
-        case GL_BGR_EXT: dst[0] = src[2]; dst[1] = src[1]; dst[2] = src[0]; dst[3] = 255; src += 3; break;
-        case GL_LUMINANCE: dst[0] = dst[1] = dst[2] = src[0]; dst[3] = 255; src += 1; break;
-        case GL_LUMINANCE_ALPHA: dst[0] = dst[1] = dst[2] = src[0]; dst[3] = src[1]; src += 2; break;
-        case GL_ALPHA: dst[0] = dst[1] = dst[2] = 255; dst[3] = src[0]; src += 1; break;
-        default: return -1;
-        }
+#define EACH(step, body) for (i = 0; i < n; i++, dst += 4, src += (step)) { body; } break
+    switch (format) {                           /* (once a row, not once a texel) */
+    case GL_RGBA: EACH(4, dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3]);
+    case GL_BGRA_EXT: EACH(4, dst[0] = src[2]; dst[1] = src[1]; dst[2] = src[0]; dst[3] = src[3]);
+    case GL_RGB: EACH(3, dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = 255);
+    case GL_BGR_EXT: EACH(3, dst[0] = src[2]; dst[1] = src[1]; dst[2] = src[0]; dst[3] = 255);
+    case GL_LUMINANCE: EACH(1, dst[0] = dst[1] = dst[2] = src[0]; dst[3] = 255);
+    case GL_LUMINANCE_ALPHA: EACH(2, dst[0] = dst[1] = dst[2] = src[0]; dst[3] = src[1]);
+    case GL_ALPHA: EACH(1, dst[0] = dst[1] = dst[2] = 255; dst[3] = src[0]);
+    default: return -1;
     }
+#undef EACH
     return 0;
 }
 
@@ -100,15 +145,16 @@ int dgl_ifmt_class(GLint f)
 void dgl_apply_ifmt(int ifc, unsigned char *p, long n)
 {
     long i;
-    for (i = 0; i < n; i++, p += 4)
-        switch (ifc) {
-        case DGL_IF_RGB: p[3] = 255; break;
-        case DGL_IF_LUMINANCE: p[1] = p[2] = p[0]; p[3] = 255; break;
-        case DGL_IF_LUMINANCE_ALPHA: p[1] = p[2] = p[0]; break;
-        case DGL_IF_ALPHA: p[0] = p[1] = p[2] = 255; break;
-        case DGL_IF_INTENSITY: p[1] = p[2] = p[3] = p[0]; break;
-        default: break;
-        }
+#define EACH(body) for (i = 0; i < n; i++, p += 4) { body; } break
+    switch (ifc) {                              /* (once a row, not once a texel) */
+    case DGL_IF_RGB: EACH(p[3] = 255);
+    case DGL_IF_LUMINANCE: EACH(p[1] = p[2] = p[0]; p[3] = 255);
+    case DGL_IF_LUMINANCE_ALPHA: EACH(p[1] = p[2] = p[0]);
+    case DGL_IF_ALPHA: EACH(p[0] = p[1] = p[2] = 255);
+    case DGL_IF_INTENSITY: EACH(p[1] = p[2] = p[3] = p[0]);
+    default: break;
+    }
+#undef EACH
 }
 
 /* Grey in RGB565 with green derived from the quantised red, so a ramp of

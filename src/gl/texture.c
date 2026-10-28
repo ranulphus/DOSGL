@@ -614,6 +614,8 @@ static int texels_class(const dgl_level *L, const dgl_palette *pal, size_t i, lo
 {
     int cls = DGL_ALPHA_OPAQUE;
     long k;
+    if (!L->idx && (L->ifc == DGL_IF_RGB || L->ifc == DGL_IF_LUMINANCE))
+        return DGL_ALPHA_OPAQUE;                 /* (dgl_apply_ifmt made every alpha 1) */
     if (!L->idx)
         return dgl_alpha_class(L->rgba + i * 4, n);
     for (k = 0; k < n; k++) {
@@ -683,11 +685,16 @@ static uint16_t pack(const dgl_texture *t, int hwfmt, const unsigned char *p)
 static void pack_span(const dgl_texture *t, int hwfmt, const dgl_level *L, const dgl_palette *pal, size_t src,
                       int n, uint32_t *row, int at)
 {
+    static uint16_t px[2048];
     int i;
     if (hwfmt == DGL_TW8)
         for (i = 0; i < n; i++)
             row[(at + i) >> 2] |= (uint32_t)L->idx[src + i] << (((at + i) & 3) * 8);
-    else
+    else if (!L->idx && n <= 2048) {
+        dgl_pack_row(hwfmt, t->grey, L->rgba + src * 4, n, px);     /* (a row at once, by table) */
+        for (i = 0; i < n; i++)
+            row[(at + i) >> 1] |= (uint32_t)px[i] << (((at + i) & 1) * 16);
+    } else
         for (i = 0; i < n; i++)
             row[(at + i) >> 1] |= (uint32_t)pack(t, hwfmt, texel(L, pal, src + i)) << (((at + i) & 1) * 16);
 }
@@ -814,10 +821,19 @@ static int sub_in_place(dgl_texture *t, int level, int x, int y, int w, int h)
         return 1;
     }
     for (j = 0; j < h; j++) {
-        volatile uint16_t *dst = (volatile uint16_t *)(mga_fb + t->level_off[level]) + (size_t)(y + j) * hw_w + x;
-        size_t row = (size_t)(y + j) * L->w + x;
-        for (i = 0; i < w; i++)
-            dst[i] = pack(t, t->hwfmt, texel(L, pal, row + (size_t)i));
+        /* A row packed at once, then written two texels a write (the level's
+         * rows start on 4 bytes: its offset on 32, at least 8 texels wide). */
+        static uint32_t row[1025];
+        volatile uint8_t *d = mga_fb + t->level_off[level] + ((size_t)(y + j) * hw_w + (size_t)(x & ~1)) * 2;
+        int n = ((x & 1) + w + 1) >> 1;
+        memset(row, 0, (size_t)n * 4);
+        pack_span(t, t->hwfmt, L, pal, (size_t)(y + j) * L->w + x, w, row, x & 1);
+        if (x & 1)                                /* (the texel before stays as it is) */
+            ((volatile uint16_t *)d)[1] = (uint16_t)(row[0] >> 16);
+        for (i = x & 1; i < n - ((x + w) & 1); i++)
+            ((volatile uint32_t *)d)[i] = row[i];
+        if ((x + w) & 1)                          /* (and the one after) */
+            ((volatile uint16_t *)d)[2 * (n - 1)] = (uint16_t)row[n - 1];
     }
     dgl_texc.sub_fast++;
     return 1;
