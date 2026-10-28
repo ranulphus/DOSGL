@@ -446,7 +446,10 @@ static uint32_t dmawin_pos;
 static void dma_blit_mode(void)
 {
     if (mga_opmode != OPMODE_DMAMOD_BLIT) {
-        engine_sync(200000);                         /* OPMODE is not queued behind drawing */
+        /* OPMODE is not queued behind drawing, and on a G400 it may not
+         * leave general purpose while the WARPs still work: after the list
+         * had only been fetched, the loads came out as without iload_done. */
+        engine_sync(200000);
         MGA_WR32(MGAREG_OPMODE, OPMODE_DMAMOD_BLIT);
         mga_opmode = OPMODE_DMAMOD_BLIT;
     }
@@ -475,6 +478,26 @@ static void iload_go(uint32_t dwgctl, int xl, int xr, int y, int h, uint32_t ar0
     MGA_WR32_DIRECT(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)y << 16) | (uint32_t)h);
     iload_row_dw = row_dw;
     iload_rows = h;
+}
+
+/* After a load, with the WARPs' DMA stream open (warp.c): OPMODE back to
+ * general purpose, which the stream's DMA assumes (warp_select sets it once
+ * at a pipe's start). On bench-g400, loads that left it in blit mode among
+ * the WARPs' DMA spoiled GLQuake's lightmap updates (demo1: rows of wrong
+ * texels, more as the demo went on, then triangles across the screen).
+ * Waiting for the engine before or after each load changed nothing; with
+ * OPMODE put back, every frame matched the CPU's writes (DGL_ILOAD=0).
+ * 86Box reads OPMODE for the DMA window only. The next load sets blit mode
+ * again (dma_blit_mode). Going back needed no wait on the card (none, or
+ * the bus FIFO empty: frames exact, no faster); the sync stays, as for any
+ * OPMODE write. */
+static void iload_done(void)
+{
+    if (mga_cmd_open && mga_opmode != 0) {
+        engine_sync(200000);                         /* OPMODE is not queued behind drawing */
+        MGA_WR32(MGAREG_OPMODE, 0);
+        mga_opmode = 0;
+    }
 }
 
 #define ILOAD_FULL (DWG_OPCOD_ILOAD | DWG_ATYPE_RSTR | DWG_SGNZERO | DWG_SHFTZERO | DWG_BOP_COPY | DWG_BLTMOD_BFCOL)
@@ -544,6 +567,7 @@ void engine_mono(int x, int y, int w, int h, const uint8_t *bits, int stride, ui
             engine_iload_row(row);
         }
     }
+    iload_done();
     emit_clip();
 }
 
@@ -567,6 +591,7 @@ void engine_iload_end(void)
 {
     while (iload_rows > 0)
         engine_iload_row(NULL);
+    iload_done();
     fifo_reserve(1);
     MGA_WR32(MGAREG_PITCH, (uint32_t)cur.pitch_px);
     pitch_reg = cur.pitch_px;
