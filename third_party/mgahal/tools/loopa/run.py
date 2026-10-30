@@ -252,6 +252,7 @@ def config_text(a, serial, cimg, bootimg, extra_hdd, tail=""):
         "@JOYSTICK@": joystick_config(getattr(a, "joystick", "none")),
         "@SERIAL@": serial,
         "@CIMG@": cimg,
+        "@CYLS@": str(getattr(a, "hdd_cyls", 1000)),
         "@BOOTIMG@": bootimg,
         "@EXTRA_HDD@": extra_hdd,
     }
@@ -330,6 +331,29 @@ def parse_serial(text):
     return info
 
 
+def hdd_disk(a):
+    """--hdd: the image as C: (used in place: the guest writes to it), its cylinders from its size (63 sectors
+    by 16 heads, as the golden C: is), and no floppy, so the BIOS boots the disk's own MBR. Nothing is put on
+    it: the job's files, RUN.BAT and the harness's tools belong to the golden disk."""
+    if a.exe or a.cmd or a.file or a.pre or a.ovl or a.game or a.net_dos:
+        raise RuntimeError("--hdd boots the disk as it is: no --exe, --cmd, --file, --pre, --ovl, --game or --net-dos")
+    cimg = os.path.abspath(a.hdd)
+    size = os.path.getsize(cimg)
+    if not size or size % (63 * 16 * 512):
+        raise RuntimeError("--hdd %s: %d bytes, not a whole number of cylinders (63 x 16 x 512)" % (cimg, size))
+    a.hdd_cyls = size // (63 * 16 * 512)
+    return cimg, "", ""
+
+
+def scratch_cyls(mb):
+    """--scratch-hdd MB: whole cylinders of 63 sectors by 16 heads (516,096 bytes), 1 to 1023 (the BIOS's CHS
+    limit, about 504 MB)."""
+    cyl = int(mb) * 1048576 // (63 * 16 * 512)
+    if not 1 <= cyl <= 1023:
+        raise RuntimeError("--scratch-hdd %s: 1 to 504 MB" % mb)
+    return cyl
+
+
 FATAL_RE = re.compile(r"(^|\s)(FATAL|fatal error|Fatal error)", re.M)
 
 
@@ -345,66 +369,78 @@ def run(a):
     try:
         prof = resolve_profile(a)
         result.update(machine=a.machine, card=a.card, boot_cfg=a.boot_cfg)
-        gold = golden(a.boot_cfg)
-        bootimg = os.path.join(vm, "boot.img")
-        cimg = os.path.join(vm, "c.img")
-        shutil.copyfile(os.path.join(gold, "boot.img"), bootimg)
-        sh(["cp", "--sparse=always", os.path.join(gold, "c.img"), cimg])
-        d = Disk(cimg, tmp)
-        for t in ("UTEXIT.COM", "SERSAY.COM", "WAITSEC.COM", "REBOOT.COM", "VMODE.COM", "KEYWAIT.COM", "VECCHK.COM", "SBCHK.COM"):
-            d.put(os.path.join(ROOT, "build/ow/dos", t), "/HX/" + t)
-        d.put(os.path.join(WATCOM, "binw/dos4gw.exe"), "/HX/DOS4GW.EXE")
-        if os.path.exists(CWSDPMI):
-            d.put(CWSDPMI, "/HX/CWSDPMI.EXE")
-        if a.mouse != "none":
-            d.put(ctmouse(tmp), "/HX/CTMOUSE.EXE")
-        if a.net_dos:
-            net_dos(d, tmp)
-        d.mkdir("/TEST")
-        exe_name = os.path.basename(a.exe).upper() if a.exe else None
-        if a.exe:
-            d.put(a.exe, "/TEST/" + exe_name)
-        game = None
-        extra = ""
-        if a.game:
-            game = json.load(open(a.games_file))[a.game]
-            fix = os.environ.get("FIXTURES_DIR", os.path.join(CACHE, "fixtures"))
-            # The D: image's size comes from the game (63 x 16 x cylinders, at most 1023:
-            # the BIOS CHS limit, about 504 MB).
-            cyl = int(game.get("cylinders", 406))
-            gimg_src = subprocess.run([os.path.join(ROOT, "tools/games/mkimage.sh"), a.game,
-                                       os.path.join(fix, game["fixture"]), game["dir"], str(cyl)],
-                                      check=True, stdout=subprocess.PIPE, text=True).stdout.strip().splitlines()[-1]
-            gimg = os.path.join(vm, "game.img")
-            sh(["cp", "--sparse=always", gimg_src, gimg])
-            extra = ("hdd_02_parameters = 63, 16, %d, 0, ide\nhdd_02_fn = %s\n"
-                     "hdd_02_ide_channel = 0:1\n" % (cyl, gimg))
-            gd = Disk(gimg, tmp, "d")
-            if a.sound is None:
-                a.sound = game.get("sound", "")
-        for spec in a.file:
-            src, dst = spec.split("=", 1) if "=" in spec else (spec, "/TEST/" + os.path.basename(spec).upper())
-            dst = dst.replace("\\", "/")
-            disk = d
-            if dst[:2].upper() == "D:":             # onto the game disk (--game)
-                if not game:
-                    raise RuntimeError("--file %s: D: needs --game" % spec)
-                disk, dst = gd, dst[2:]
-            parts = dst.strip("/").split("/")[:-1]
-            for i in range(1, len(parts) + 1):
-                disk.mkdir("/" + "/".join(parts[:i]))
-            disk.put(src, dst)
-        if a.ovl:
-            import hashlib
-            dst = a.ovl_dst or ("D:\\" + game["ovl"] if game else "C:\\TEST\\GLIDE2X.OVL")
-            drive, path = dst[0].lower(), dst[2:].replace("\\", "/")
-            (gd if drive == "d" else d).put(a.ovl, path)
-            result["ovl_sha256"] = hashlib.sha256(open(a.ovl, "rb").read()).hexdigest()
-            result["ovl_dst"] = dst
-        run_lines = run_bat_lines(a, exe_name, game)
-        rb = os.path.join(tmp, "RUN.BAT")
-        open(rb, "wb").write(dos_bat(run_lines))
-        d.put(rb, "/RUN.BAT")
+        d = None
+        if a.hdd:                               # a bench PC's own disk (docs/loops.md): booted as it is
+            cimg, bootimg, extra = hdd_disk(a)
+        else:
+            gold = golden(a.boot_cfg)
+            bootimg = os.path.join(vm, "boot.img")
+            cimg = os.path.join(vm, "c.img")
+            shutil.copyfile(os.path.join(gold, "boot.img"), bootimg)
+            sh(["cp", "--sparse=always", os.path.join(gold, "c.img"), cimg])
+            d = Disk(cimg, tmp)
+            for t in ("UTEXIT.COM", "SERSAY.COM", "WAITSEC.COM", "REBOOT.COM", "VMODE.COM", "KEYWAIT.COM", "VECCHK.COM", "SBCHK.COM"):
+                d.put(os.path.join(ROOT, "build/ow/dos", t), "/HX/" + t)
+            d.put(os.path.join(WATCOM, "binw/dos4gw.exe"), "/HX/DOS4GW.EXE")
+            if os.path.exists(CWSDPMI):
+                d.put(CWSDPMI, "/HX/CWSDPMI.EXE")
+            if a.mouse != "none":
+                d.put(ctmouse(tmp), "/HX/CTMOUSE.EXE")
+            if a.net_dos:
+                net_dos(d, tmp)
+            d.mkdir("/TEST")
+            exe_name = os.path.basename(a.exe).upper() if a.exe else None
+            if a.exe:
+                d.put(a.exe, "/TEST/" + exe_name)
+            game = None
+            extra = ""
+            if a.game:
+                game = json.load(open(a.games_file))[a.game]
+                fix = os.environ.get("FIXTURES_DIR", os.path.join(CACHE, "fixtures"))
+                # The D: image's size comes from the game (63 x 16 x cylinders, at most 1023:
+                # the BIOS CHS limit, about 504 MB).
+                cyl = int(game.get("cylinders", 406))
+                gimg_src = subprocess.run([os.path.join(ROOT, "tools/games/mkimage.sh"), a.game,
+                                           os.path.join(fix, game["fixture"]), game["dir"], str(cyl)],
+                                          check=True, stdout=subprocess.PIPE, text=True).stdout.strip().splitlines()[-1]
+                gimg = os.path.join(vm, "game.img")
+                sh(["cp", "--sparse=always", gimg_src, gimg])
+                extra = ("hdd_02_parameters = 63, 16, %d, 0, ide\nhdd_02_fn = %s\n"
+                         "hdd_02_ide_channel = 0:1\n" % (cyl, gimg))
+                gd = Disk(gimg, tmp, "d")
+                if a.sound is None:
+                    a.sound = game.get("sound", "")
+            for spec in a.file:
+                src, dst = spec.split("=", 1) if "=" in spec else (spec, "/TEST/" + os.path.basename(spec).upper())
+                dst = dst.replace("\\", "/")
+                disk = d
+                if dst[:2].upper() == "D:":             # onto the game disk (--game)
+                    if not game:
+                        raise RuntimeError("--file %s: D: needs --game" % spec)
+                    disk, dst = gd, dst[2:]
+                parts = dst.strip("/").split("/")[:-1]
+                for i in range(1, len(parts) + 1):
+                    disk.mkdir("/" + "/".join(parts[:i]))
+                disk.put(src, dst)
+            if a.ovl:
+                import hashlib
+                dst = a.ovl_dst or ("D:\\" + game["ovl"] if game else "C:\\TEST\\GLIDE2X.OVL")
+                drive, path = dst[0].lower(), dst[2:].replace("\\", "/")
+                (gd if drive == "d" else d).put(a.ovl, path)
+                result["ovl_sha256"] = hashlib.sha256(open(a.ovl, "rb").read()).hexdigest()
+                result["ovl_dst"] = dst
+            run_lines = run_bat_lines(a, exe_name, game)
+            rb = os.path.join(tmp, "RUN.BAT")
+            open(rb, "wb").write(dos_bat(run_lines))
+            d.put(rb, "/RUN.BAT")
+
+        if a.scratch_hdd:                       # a blank disk for raw-sector tests (GLOS's DSKTORT), IDE 1:0
+            cyl = scratch_cyls(a.scratch_hdd)
+            simg = os.path.join(vm, "scratch.img")
+            with open(simg, "wb") as f:
+                f.truncate(63 * 16 * 512 * cyl)
+            extra += "hdd_03_parameters = 63, 16, %d, 0, ide\nhdd_03_fn = %s\nhdd_03_ide_channel = 1:0\n" % (cyl, simg)
+            result["scratch_hdd"] = {"cylinders": cyl, "sectors": 63 * 16 * cyl}
 
         serial = os.path.join(out, "serial.log")
         open(serial, "w").close()
@@ -454,7 +490,7 @@ def run(a):
         p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=errf, stderr=errf, env=env)
         last_size, last_change, status, done_at = 0, time.time(), None, None
         f1_taps, next_f1 = 0, t0 + 6
-        boot_at = None
+        boot_at = t0 if a.hdd else None         # (--hdd: --shots from the start; the disk's DOS may say nothing)
         # --keys in segments: the first timed from boot, each later one from
         # when its @TEXT anchor shows in the serial log (searched after the
         # previous anchor's match), so a slow emulator cannot outrun a script.
@@ -536,7 +572,7 @@ def run(a):
                 t = hostio.TcpSend(ports[st["target"]], st["text"], os.path.join(out, "tcp-%d.txt" % len(senders)))
                 t.start()
                 senders.append(t)
-            if last_size == 0 and now >= next_f1 and f1_taps < 12:
+            if last_size == 0 and now >= next_f1 and f1_taps < 12 and not a.hdd:   # (--hdd: the disk's own menus)
                 # A fresh NVRAM stops the BIOS at "press F1 to continue".
                 try:
                     p.stdin.write(b"key tap 0x3b\n")
@@ -606,6 +642,13 @@ def run(a):
         result.update(info)
         stderr_text = open(os.path.join(out, "stderr.log"), "rb").read().decode("latin-1")
         result["mga_unsupported"] = sorted(set(re.findall(r"MGA-UNSUPPORTED: (.*)", stderr_text)))
+        # 86Box's silicon checks (local patch 0124): each kind's count (the highest reported, so at least
+        # this many) and its first message
+        hazards = {}
+        for kind, n, msg in re.findall(r"MGA-HAZARD: ([a-z-]+): #(\d+): (.*)", stderr_text):
+            h = hazards.setdefault(kind, {"count": 0, "first": msg})
+            h["count"] = max(h["count"], int(n))
+        result["mga_hazards"] = hazards
         logpath = os.path.join(out, "86box.log")
         boxlog = open(logpath, "rb").read().decode("latin-1") if os.path.exists(logpath) else ""
         if status is None:
@@ -626,16 +669,19 @@ def run(a):
             result["note"] = "unit tester exit did not end 86Box"
         if steps and status == "PASS" and (steps.failed or steps.is_alive()):
             status = "FAIL"                     # the guest ended well, the SSH steps didn't
+        if status == "PASS" and a.hazards == "fail" and hazards:
+            status = "HAZARD"                   # 86Box saw what goes wrong on a real G400 (patch 0124)
         result["status"] = status
         # Collect guest output files and convert images.
         files = os.path.join(out, "files")
-        d.get_dir("/OUT", files)
+        if d:
+            d.get_dir("/OUT", files)
         for fn in sorted(os.listdir(files)) if os.path.isdir(files) else []:
             if fn.upper().endswith(".PPM"):
                 w, h, rgb = png.read_ppm(os.path.join(files, fn))
                 png.write_png(os.path.join(out, fn[:-4].lower() + ".png"), w, h, rgb)
         vm_nvr = os.path.join(vm, "nvr")
-        if status == "PASS" and not os.path.isdir(nvr_cache) and os.path.isdir(vm_nvr):
+        if status == "PASS" and not a.hdd and not os.path.isdir(nvr_cache) and os.path.isdir(vm_nvr):
             shutil.copytree(vm_nvr, nvr_cache)
         result["f1_taps"] = f1_taps
         shots = os.path.join(vm, "screenshots")
@@ -664,8 +710,16 @@ def main():
                     help="games list (default tools/games/games.json; DOS-GL has its own)")
     ap.add_argument("--ovl-dst", help="DOS path for --ovl (default C:\\TEST\\GLIDE2X.OVL, or the game's)")
     ap.add_argument("--args", default="")
+    ap.add_argument("--hazards", choices=("report", "fail"), default=os.environ.get("LOOPA_HAZARDS", "report"),
+                    help="86Box's silicon checks (local patch 0124): always in result.json mga_hazards; with fail, "
+                         "a job that would pass gets status HAZARD (default $LOOPA_HAZARDS or report)")
     ap.add_argument("--ovl", help="GLIDE2X.OVL to install as C:\\TEST\\GLIDE2X.OVL")
     ap.add_argument("--file", action="append", default=[], help="SRC[=/DOS/PATH] extra files")
+    ap.add_argument("--hdd", help="boot this raw hard disk image as C: instead (in place, written to; no floppy, "
+                    "nothing put on it): a bench PC's own disk. Outside the repository and the cache, mount its "
+                    "directory into the dev container with MGA_EXTRA_DIR")
+    ap.add_argument("--scratch-hdd", metavar="MB", help="a blank disk of MB megabytes (sparse, made for the run) on "
+                    "IDE 1:0, unpartitioned, so DOS leaves it alone: for raw-sector tests (GLOS's DSKTORT)")
     ap.add_argument("--pre", action="append", default=[], help="extra RUN.BAT lines before the test")
     ap.add_argument("--keys", default="", help="comma list of SECONDS:SCANCODE[:down|up] after HX-BOOT, "
                     "or SECONDS:mouse:DX:DY[:BUTTONS] (mickeys; buttons bit 0 left, 1 right, 2 middle; needs --mouse), "
