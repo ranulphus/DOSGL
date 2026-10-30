@@ -1246,19 +1246,10 @@ static void emit_point(const dgl_cvtx *a)
 
 static void emit_end(void) { }
 
-/* The CPU's setup from now on (GLOS windows: dgl/glos.c). */
-void dgl_emit_no_warp(void)
-{
-    if (warp_tris || warp_failures)
-        warp_stop();
-    warp_on = warp_now = 0;
-    dgl_gl.dirty |= DGL_DIRTY_REGS;
-}
-
 void dgl_emit_install(void)
 {
     const char *e = getenv("DGL_WARP");
-    warp_on = !(e && *e == '0') && warp_available() && !dgl_glos.on;  /* (not in a GLOS window: dgl/glos.c) */
+    warp_on = !(e && *e == '0') && warp_available();
     e = getenv("DGL_WARPDMA");
     warp_use_dma = !(e && *e == '0');          /* DGL_WARPDMA=0: vertices by the CPU, no DMA stream */
     e = getenv("DGL_AGP");

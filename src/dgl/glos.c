@@ -25,6 +25,7 @@
 #include "dgl.h"
 #include "../gl/gl_state.h"
 #include "mga/mmio.h"
+#include "mga/warp.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -209,13 +210,11 @@ int dgl_glos_open(dgl_glos_layout *l)
     l->heap_end = l->heap_off + b;
     l->vram_bytes = g.vram;
     dgl_glos.on = 1;
-    /* No WARP in a window: GLOS takes the engine back in any DOS or GLOS
-     * call, and its HAL waits for an idle STATUS, which the WARPs can show
-     * with triangles of the program's still to be drawn: those then landed
-     * on GLOS's target (conformance t27 in a window on bench-g400 copied an
-     * empty frame). Until GLOS fences the WARPs at a hand-over, the CPU
-     * sets triangles up here. */
-    dgl_emit_no_warp();
+    /* The WARP's vertices by the CPU, not by the DMA command stream: GLOS
+     * takes the engine back in the program's next DOS or GLOS call, when
+     * commands could still be waiting in the stream's list to run after
+     * GLOS's own (conformance t27 in a window on bench-g400). */
+    warp_use_dma = 0;
     (void)a;
     return 0;
 }

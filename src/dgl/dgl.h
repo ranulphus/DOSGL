@@ -47,7 +47,6 @@ void dgl_ftrace_write(void);              /* at exit (not on a fault) */
 
 /* emit.c: install the hardware sinks for the vertex stream. */
 void dgl_emit_install(void);
-void dgl_emit_no_warp(void);           /* (emit.c) the CPU's setup from now on: GLOS windows */
 
 /* Context state (context.c). */
 typedef struct {
