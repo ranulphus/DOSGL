@@ -1246,18 +1246,21 @@ static void emit_point(const dgl_cvtx *a)
 
 static void emit_end(void) { }
 
+/* The CPU's setup from now on (GLOS windows: dgl/glos.c). */
+void dgl_emit_no_warp(void)
+{
+    if (warp_tris || warp_failures)
+        warp_stop();
+    warp_on = warp_now = 0;
+    dgl_gl.dirty |= DGL_DIRTY_REGS;
+}
+
 void dgl_emit_install(void)
 {
     const char *e = getenv("DGL_WARP");
-    warp_on = !(e && *e == '0') && warp_available();
+    warp_on = !(e && *e == '0') && warp_available() && !dgl_glos.on;  /* (not in a GLOS window: dgl/glos.c) */
     e = getenv("DGL_WARPDMA");
-    /* DGL_WARPDMA=0: vertices by the CPU, no DMA stream. Always in a GLOS
-     * window: GLOS takes the engine back in any DOS or GLOS call, or while
-     * the program is quiet, and work still in the stream's list then ran
-     * after GLOS's own drawing, with its target (conformance t27 copied an
-     * empty frame). Through the DMA window every write reaches the chip in
-     * order, and GLOS's hand-over waits for the WARPs. */
-    warp_use_dma = !(e && *e == '0') && !dgl_glos.on;
+    warp_use_dma = !(e && *e == '0');          /* DGL_WARPDMA=0: vertices by the CPU, no DMA stream */
     e = getenv("DGL_AGP");
     warp_use_agp = !(e && *e == '0');          /* DGL_AGP=0: cached rings fetched by PCI, under GLOS too */
     if ((e = getenv("DGL_SEQ")) != NULL)

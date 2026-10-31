@@ -208,7 +208,15 @@ int dgl_glos_open(dgl_glos_layout *l)
     }
     l->heap_end = l->heap_off + b;
     l->vram_bytes = g.vram;
-    dgl_glos.on = 1;                    /* (and the WARP's vertices by the CPU: dgl_emit_install) */
+    dgl_glos.on = 1;
+    /* No WARP in a window: the CPU sets triangles up here. GLOS takes the
+     * engine back in any DOS or GLOS call, or while the program is quiet,
+     * and work still in the DMA stream's list then ran after GLOS's own
+     * drawing, onto GLOS's target (conformance t27 in a window copied an
+     * empty frame). The WARP fed by the CPU instead was slower than the
+     * CPU's setup on bench-g400 (WARPTRI), and DOSBench's scenes in a
+     * window that way were ended by GLOS's GPU watchdog (2026-10-31). */
+    dgl_emit_no_warp();
     (void)a;
     return 0;
 }
