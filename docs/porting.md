@@ -101,7 +101,10 @@ dglShutdown();
     sends the rest to the CPU) and DMA transfers, says what the rings were (1 cached, PCI; 2 write-combining, PCI; 3
     write-combining fetched by AGP; and their size), counts the engine's resets and timed-out waits, and the
     strips and fans sent whole (all / with two textures). `DGL_WARPDMA=0` sends the WARP's vertices by the CPU through
-    the DMA window instead of the DMA command stream.
+    the DMA window instead of the DMA command stream. In a GLOS window they always go that way: GLOS takes the
+    engine back in any DOS or GLOS call, or while the program is quiet, and work still in the stream's list then
+    ran after GLOS's own drawing, onto GLOS's target. Strips and fans then go as triangles (sequences need the
+    stream), which draws a few pixels of their shared edges otherwise (conformance t28-t31: 30 and 624 pixels).
   - `DGL_AGP=0` keeps the DMA rings cached and fetched by PCI under GLOS too, which otherwise makes them
     write-combining (API 1.4) and turns AGP on. `DGL_RING=bytes` (256 KB) and `DGL_KICK=bytes` (6 KB of
     vertices between kicks) tune the rings.
