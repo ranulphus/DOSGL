@@ -283,14 +283,14 @@ static void validate_state(void)
         }
         /* The WARP: Mesa's two pipes (everything iterated; DWGCTL, ALPHACTRL,
          * MACCESS and TEXCTL2 decide what is used), DWGCTL written here (the
-         * setup writes it otherwise), the maps' sizes as the microcode wants
+         * setup writes it otherwise) through setup_dwgctl, so that the HAL's
+         * clip barrier draws with it, the maps' sizes as the microcode wants
          * them. */
         warp_now = 0;
         if (warp_on) {
             if (warp_select(WARP_S | WARP_A | WARP_F | (dual ? WARP_T2 : 0)) == 0) {
                 warp_now = 1;
-                fifo_reserve(1);
-                MGA_WR32(MGAREG_DWGCTL, tctx.dwgctl);
+                setup_dwgctl(tctx.dwgctl);
                 if (textured) {
                     warp_tex(0, tstate.w_log2, tstate.h_log2, 0);
                     if (dual)
