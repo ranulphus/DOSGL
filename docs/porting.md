@@ -96,7 +96,8 @@ dglShutdown();
     again without `PROF=1` returns to the library without timers.
   - `DGL_VSYNC=0` or `1` overrides the program's choice of swap on retrace.
   - `DGL_WARP=0` sets every triangle up on the CPU on a G400 or G450, which otherwise use the chip's WARP
-    setup engine with vertices by bus-master DMA (MGA-Glide `docs/g400-warp.md`). At exit a
+    setup engine with vertices by bus-master DMA (MGA-Glide `docs/g400-warp.md`). `DGL_WARP=1` also uses the G200's
+    WARP, which is off by default until it has passed on the real card (MGA-Glide `docs/g200-warp.md`). At exit a
     `DGL-WARP tris= failures= kicks= ring= resets= timeouts= seqs=` line counts its triangles, failures (each one
     sends the rest to the CPU) and DMA transfers, says what the rings were (1 cached, PCI; 2 write-combining, PCI; 3
     write-combining fetched by AGP; and their size), counts the engine's resets and timed-out waits, and the
