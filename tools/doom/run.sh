@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run PrBoom-plus on DOS-GL in Loop A (86Box, the vendored MGA-Glide runner).
+# Run PrBoom-plus on DOS-GL in Loop A (86Box, MGA-Glide's runner).
 #
 #   run.sh MODE [CARD] [-- PRBOOMP ARGS...]
 #
@@ -30,7 +30,7 @@
 # SHOTS (screenshot seconds after boot), PRE (one more
 # RUN.BAT line), NAME (result directory out/NAME, default doom-MODE-CARD),
 # NORUN=1 (check out/NAME from an earlier run without running again),
-# MGAHAL_DIR (another copy of the harness), DOOM_BUILD (another build
+# MGAHAL_DIR (another MGA-Glide checkout; default $MGA_GLIDE or ~/MGA-Glide), DOOM_BUILD (another build
 # directory holding PRBOOMP.EXE and PRBOOM.WAD). DJGPP's long file names are off
 # (LFN=n): the program must live with 8.3 names.
 # Needs build/doom (tools/doom/build.sh) and the fixture (tools/doom/fixtures.py).
@@ -41,8 +41,8 @@ mode=${1:?usage: run.sh MODE [CARD] [-- ARGS...]}; shift
 card=g450
 if [ $# -gt 0 ] && [ "$1" != "--" ]; then card=$1; shift; fi
 [ "${1:-}" = "--" ] && shift
-hal=${MGAHAL_DIR:-$root/third_party/mgahal}
-# The DOS helpers Loop A puts in C:\HX (make sync-hal starts the tree afresh).
+hal=${MGAHAL_DIR:-${MGA_GLIDE:-$HOME/MGA-Glide}}
+# The DOS helpers Loop A puts in C:\HX (built in MGA-Glide's checkout).
 [ -f "$hal/build/ow/dos/UTEXIT.COM" ] || make -C "$root" -s dostools
 b=${DOOM_BUILD:-$root/build/doom}
 [ -f "$b/PRBOOMP.EXE" ] || { echo "run.sh: no $b/PRBOOMP.EXE (tools/doom/build.sh)" >&2; exit 2; }

@@ -25,7 +25,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MGAHAL = os.path.join(ROOT, "third_party", "mgahal")
+MGAHAL = os.environ.get("MGA_GLIDE", os.path.expanduser("~/MGA-Glide"))     # its harness and image tools
 sys.path.insert(0, os.path.join(MGAHAL, "tools"))
 sys.path.insert(0, os.path.join(MGAHAL, "tools", "loopa"))
 import imgcmp  # noqa: E402
@@ -39,7 +39,7 @@ def tests_available():
 
 
 PRE = []                                            # --pre: RUN.BAT lines for every test
-MGA = os.environ.get("MGA_GLIDE", os.path.expanduser("~/MGA-Glide"))
+MGA = MGAHAL
 
 
 def run_dos(test, card, out):

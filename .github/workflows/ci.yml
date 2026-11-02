@@ -8,6 +8,8 @@ env:
   MGA_CACHE: ${{ github.workspace }}/.mga-cache
   DJGPP_PREFIX: ${{ github.workspace }}/.mga-opt/djgpp
   WATCOM: ${{ github.workspace }}/.mga-opt/watcom
+  # The Matrox HAL and harness: MGA-Glide's main, checked out beside the build (PRD D15).
+  MGA_GLIDE: ${{ github.workspace }}/mga-glide
 
 jobs:
   host:
@@ -15,15 +17,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { submodules: true }
-      - run: make check-hal
+      - uses: actions/checkout@v4
+        with: { repository: ranulphus/MGA-Glide, path: mga-glide }
       - run: make tests-host
 
   cross:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { repository: ranulphus/MGA-Glide, path: mga-glide }
       - uses: actions/cache@v4
-        with: { path: .mga-opt/djgpp, key: "djgpp-${{ hashFiles('third_party/mgahal/tools/setup/versions.mk') }}" }
+        with: { path: .mga-opt/djgpp, key: "djgpp-${{ hashFiles('mga-glide/tools/setup/versions.mk') }}" }
       - run: make setup-djgpp
       - run: make
       - uses: actions/upload-artifact@v4
@@ -36,16 +41,18 @@ jobs:
       matrix: { card: [g450, g400, g200] }
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && xargs -a third_party/mgahal/tools/docker/packages.txt sudo apt-get install -y --no-install-recommends
+      - uses: actions/checkout@v4
+        with: { repository: ranulphus/MGA-Glide, path: mga-glide }
+      - run: sudo apt-get update && xargs -a mga-glide/tools/docker/packages.txt sudo apt-get install -y --no-install-recommends
       - uses: actions/cache@v4
-        with: { path: .mga-opt/djgpp, key: "djgpp-${{ hashFiles('third_party/mgahal/tools/setup/versions.mk') }}" }
+        with: { path: .mga-opt/djgpp, key: "djgpp-${{ hashFiles('mga-glide/tools/setup/versions.mk') }}" }
       # Open Watcom builds the DOS helpers in C:\HX and supplies DOS4GW.EXE, which Loop A puts in every VM.
       - uses: actions/cache@v4
-        with: { path: .mga-opt/watcom, key: "ow-${{ hashFiles('third_party/mgahal/tools/setup/versions.mk') }}" }
+        with: { path: .mga-opt/watcom, key: "ow-${{ hashFiles('mga-glide/tools/setup/versions.mk') }}" }
       - uses: actions/cache@v4
         with:
           path: .mga-cache/86box
-          key: "86box-${{ hashFiles('third_party/mgahal/tools/setup/versions.mk', 'third_party/mgahal/tools/86box/series', 'third_party/mgahal/tools/86box/patches/**') }}"
+          key: "86box-${{ hashFiles('mga-glide/tools/setup/versions.mk', 'mga-glide/tools/86box/series', 'mga-glide/tools/86box/patches/**') }}"
       - run: make setup-djgpp setup-ow
       - run: make 86box
       - run: make loopa TEST=hello CARD=${{ matrix.card }}

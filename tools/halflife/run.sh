@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run Half-Life on DOS-GL in Loop A (86Box, the vendored MGA-Glide runner).
+# Run Half-Life on DOS-GL in Loop A (86Box, MGA-Glide's runner).
 #
 #   run.sh MODE [CARD] [-- HLDGL ARGS...]
 #
@@ -30,7 +30,7 @@
 # none), SHOTS (screenshot
 # seconds after boot), PRE (one more
 # RUN.BAT line), NAME (result directory out/NAME, default hl-MODE-CARD),
-# MGAHAL_DIR (another copy of the harness).
+# MGAHAL_DIR (another MGA-Glide checkout; default $MGA_GLIDE or ~/MGA-Glide).
 # Needs build/halflife (tools/halflife/build.sh) and the fixture
 # (tools/halflife/fixtures.py). Screenshots of retail data stay local.
 set -euo pipefail
@@ -40,8 +40,8 @@ mode=${1:?usage: run.sh MODE [CARD] [-- ARGS...]}; shift
 card=g450
 if [ $# -gt 0 ] && [ "$1" != "--" ]; then card=$1; shift; fi
 [ "${1:-}" = "--" ] && shift
-hal=${MGAHAL_DIR:-$root/third_party/mgahal}
-# The DOS helpers Loop A puts in C:\HX (make sync-hal starts the tree afresh).
+hal=${MGAHAL_DIR:-${MGA_GLIDE:-$HOME/MGA-Glide}}
+# The DOS helpers Loop A puts in C:\HX (built in MGA-Glide's checkout).
 [ -f "$hal/build/ow/dos/UTEXIT.COM" ] || make -C "$root" -s dostools
 b=$root/build/halflife
 name=${NAME:-hl-$mode-$card}

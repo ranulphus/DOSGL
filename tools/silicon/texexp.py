@@ -21,8 +21,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-HAL = os.environ.get("MGAHAL_DIR", os.path.join(ROOT, "third_party", "mgahal"))
 MGA = os.environ.get("MGA_GLIDE", os.path.expanduser("~/MGA-Glide"))
+HAL = os.environ.get("MGAHAL_DIR", MGA)
 EXE = os.path.join(ROOT, "build", "exe", "TEXEXP.EXE")
 
 CELLS = {

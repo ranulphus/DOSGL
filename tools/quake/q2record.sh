@@ -18,7 +18,7 @@ card=${3:-g450}
 cfg=$here/q2/$name.cfg
 [ -f "$cfg" ] || { echo "q2record: no $cfg" >&2; exit 1; }
 up=$(echo "$name" | tr a-z A-Z)
-hal=${MGAHAL_DIR:-$root/third_party/mgahal}
+hal=${MGAHAL_DIR:-${MGA_GLIDE:-$HOME/MGA-Glide}}
 q=$root/build/quake
 dest=${MGA_CACHE:-$HOME/.cache/mga-glide}/fixtures/games/q2demos
 cd "$root"

@@ -12,8 +12,8 @@ performance numbers are pending. See `docs/porting.md` for using the library
 and `docs/testing.md` for the test loops.
 
 DOS-GL shares its Matrox hardware layer, test harness, bench tooling and
-86Box patches with [MGA-Glide](../MGA-Glide), vendored in
-`third_party/mgahal/` (refresh with `make sync-hal`; never edit it in place).
+86Box patches with [MGA-Glide](https://github.com/ranulphus/MGA-Glide), built
+from its checkout beside this one (`MGA_GLIDE`, default `~/MGA-Glide`), on main.
 
 ## Building
 

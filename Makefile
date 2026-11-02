@@ -8,13 +8,19 @@
 #   make doom / loopa-doom MODE=timedemo   PrBoom-plus on SDL3 and DOS-GL (tools/doom)
 #   make sdl / sdl-examples / loopa-sdl   SDL3 on DOS with DOS-GL (tools/sdl, docs/sdl.md)
 #   make conform-bench PC=bench-g400 [TESTS=...]   the conformance suite on a bench PC
-#   make sync-hal         refresh third_party/mgahal from MGA-Glide
-#   make check-hal        verify the vendored copy against its MANIFEST
+# The Matrox HAL, harness and 86Box patches come from MGA-Glide's checkout beside
+# this one (MGA_GLIDE, default ~/MGA-Glide; PRD D15), built from its main as it is.
 include config.mk
 -include config.local.mk
 .SECONDEXPANSION:
 
-MGAHAL   := third_party/mgahal
+MGAHAL   := $(MGA_GLIDE)
+export MGA_GLIDE
+ifeq ($(wildcard $(MGAHAL)/hal/include/mga/hal.h),)
+ifneq ($(filter-out clean help,$(or $(MAKECMDGOALS),all)),)
+$(error No MGA-Glide checkout at MGA_GLIDE=$(MGA_GLIDE): clone github.com/ranulphus/MGA-Glide there, or set MGA_GLIDE)
+endif
+endif
 BUILD_ID := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 Q ?= @
 
@@ -32,16 +38,22 @@ ifeq ($(PROF),1)
 DJ_CFLAGS += -DMGA_PROF=1
 endif
 
-# The shared HAL (PRD D15) goes into libGL.a so consumers link only -lGL.
+# The shared HAL (PRD D15) goes into libGL.a so consumers link only -lGL. Its
+# objects are built here, under build/*/mgahal/ (MGA-Glide's tree is only read).
 HAL_SRCS := $(addprefix $(MGAHAL)/hal/,src/debug/serial.c src/pci.c src/chip.c src/vbe.c src/fifo.c \
               src/engine.c src/dac.c src/texhw.c src/present.c src/debug/regtrace.c src/setup/trap.c src/warp.c port/djgpp.c)
+hal_objs = $(patsubst $(MGAHAL)/%.c,build/$(1)/mgahal/%.o,$(2))
 DGL_SRCS := $(wildcard src/dgl/*.c) $(wildcard src/gl/*.c)
 LIB := build/lib/libGL.a
 
-.PHONY: all lib examples sdl sdl-host sdl-examples loopa-sdl tests-host loopa conform conform-dos conform-host classicube loopa-classicube quake loopa-quake halflife loopa-halflife doom loopa-doom setup-djgpp setup-ow dostools 86box sync-hal check-hal clean help
+.PHONY: all lib examples sdl sdl-host sdl-examples loopa-sdl tests-host loopa conform conform-dos conform-host classicube loopa-classicube quake loopa-quake halflife loopa-halflife doom loopa-doom setup-djgpp setup-ow dostools 86box clean help
 all: lib examples
 
 build/djgpp/%.o: %.c build/prof_mode
+	@mkdir -p $(dir $@)
+	$(Q)echo "  DJCC    $<"
+	$(Q)$(DJCC) $(DJ_CFLAGS) -MMD -c -o $@ $<
+build/djgpp/mgahal/%.o: $(MGAHAL)/%.c build/prof_mode
 	@mkdir -p $(dir $@)
 	$(Q)echo "  DJCC    $<"
 	$(Q)$(DJCC) $(DJ_CFLAGS) -MMD -c -o $@ $<
@@ -64,7 +76,7 @@ GEN_SRCS := build/gen/stubs.c build/gen/procs.c
 $(GEN_SRCS) &: tools/gen_stubs.py src/gl/gl11.api $(DGL_SRCS)
 	$(Q)python3 tools/gen_stubs.py src/gl src/dgl build/gen
 
-$(LIB): $(DGL_SRCS:%.c=build/djgpp/%.o) $(GEN_SRCS:%.c=build/djgpp/%.o) $(HAL_SRCS:%.c=build/djgpp/%.o)
+$(LIB): $(DGL_SRCS:%.c=build/djgpp/%.o) $(GEN_SRCS:%.c=build/djgpp/%.o) $(call hal_objs,djgpp,$(HAL_SRCS))
 	@mkdir -p $(dir $@)
 	$(Q)echo "  AR      $@"
 	$(Q)rm -f $@ && $(DJAR) rcs $@ $^
@@ -211,7 +223,10 @@ RIG_HAL := $(filter-out %/port/djgpp.c,$(HAL_SRCS)) $(MGAHAL)/hal/port/linux.c
 build/rig/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(Q)$(HOST_CC) $(RIG_CFLAGS) -MMD -c -o $@ $<
-build/rig/libGL.a: $(DGL_SRCS:%.c=build/rig/%.o) $(GEN_SRCS:%.c=build/rig/%.o) $(RIG_HAL:%.c=build/rig/%.o)
+build/rig/mgahal/%.o: $(MGAHAL)/%.c
+	@mkdir -p $(dir $@)
+	$(Q)$(HOST_CC) $(RIG_CFLAGS) -MMD -c -o $@ $<
+build/rig/libGL.a: $(DGL_SRCS:%.c=build/rig/%.o) $(GEN_SRCS:%.c=build/rig/%.o) $(call hal_objs,rig,$(RIG_HAL))
 	$(Q)rm -f $@ && ar rcs $@ $^
 build/rig/conform/%: build/rig/libGL.a tests/conform/ct_rig.c
 	@mkdir -p $(dir $@)
@@ -233,8 +248,8 @@ loopa: examples dostools
 	  --exe build/exe/$(shell echo $(TEST) | tr a-z A-Z).EXE --card $(CARD) --out $(CURDIR)/out/$(TEST) \
 	  $(if $(ARGS),--args="$(ARGS)")
 
-# Toolchain and emulator come from the vendored harness (pinned in its
-# tools/setup/versions.mk; cached in ~/.cache/mga-glide, shared with MGA-Glide).
+# Toolchain and emulator come from MGA-Glide's harness (its tools/setup/versions.mk;
+# cached in ~/.cache/mga-glide). dostools and 86box build in MGA-Glide's checkout.
 setup-djgpp:
 	$(MAKE) -C $(MGAHAL) setup-djgpp DJGPP_PREFIX=$(DJGPP_PREFIX)
 setup-ow:
@@ -245,13 +260,8 @@ dostools:
 86box:
 	$(MAKE) -C $(MGAHAL) 86box
 
-sync-hal:
-	tools/sync-hal.sh $(MGA_GLIDE)
-check-hal:
-	tools/sync-hal.sh --check
-
 clean:
 	rm -rf build out
 
 help:
-	@sed -n '3,9p' Makefile
+	@sed -n '3,12p' Makefile
