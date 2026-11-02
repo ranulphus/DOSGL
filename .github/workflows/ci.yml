@@ -10,6 +10,7 @@ env:
   WATCOM: ${{ github.workspace }}/.mga-opt/watcom
   # The Matrox HAL and harness: MGA-Glide's main, checked out beside the build (PRD D15).
   MGA_GLIDE: ${{ github.workspace }}/mga-glide
+  GLOS: ${{ github.workspace }}/glos
 
 jobs:
   host:
@@ -19,6 +20,8 @@ jobs:
         with: { submodules: true }
       - uses: actions/checkout@v4
         with: { repository: ranulphus/MGA-Glide, path: mga-glide }
+      - uses: actions/checkout@v4
+        with: { repository: ranulphus/GLOS, path: glos }
       - run: make tests-host
 
   cross:
@@ -27,6 +30,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with: { repository: ranulphus/MGA-Glide, path: mga-glide }
+      - uses: actions/checkout@v4
+        with: { repository: ranulphus/GLOS, path: glos }
       - uses: actions/cache@v4
         with: { path: .mga-opt/djgpp, key: "djgpp-${{ hashFiles('mga-glide/tools/setup/versions.mk') }}" }
       - run: make setup-djgpp
@@ -43,6 +48,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with: { repository: ranulphus/MGA-Glide, path: mga-glide }
+      - uses: actions/checkout@v4
+        with: { repository: ranulphus/GLOS, path: glos }
       - run: sudo apt-get update && xargs -a mga-glide/tools/docker/packages.txt sudo apt-get install -y --no-install-recommends
       - uses: actions/cache@v4
         with: { path: .mga-opt/djgpp, key: "djgpp-${{ hashFiles('mga-glide/tools/setup/versions.mk') }}" }

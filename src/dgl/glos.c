@@ -32,7 +32,7 @@ dgl_glos_state dgl_glos;
 
 #if defined(__DJGPP__) && !defined(DGL_RIG)
 #define GLOS_KERNEL                     /* (the API's numbers and structures only: not libglos) */
-#include "../../third_party/glos/api.h"
+#include <glos/api.h>                  /* (GLOS's, from its checkout: GLOS in config.mk) */
 #include <dpmi.h>
 #include <sys/nearptr.h>
 

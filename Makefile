@@ -21,13 +21,17 @@ ifneq ($(filter-out clean help,$(or $(MAKECMDGOALS),all)),)
 $(error No MGA-Glide checkout at MGA_GLIDE=$(MGA_GLIDE): clone github.com/ranulphus/MGA-Glide there, or set MGA_GLIDE)
 endif
 endif
+# GLOS's API header (src/dgl/glos.c) comes from its checkout beside this one too (GLOS, default ~/GLOS), on main.
+# Dependency files from before 2026-11-02 name the vendored copies that went (third_party/mgahal, third_party/glos):
+# they and their objects are dropped once, so the next build makes them afresh against the checkouts.
+$(foreach d,$(shell grep -rlE 'third_party/(mgahal|glos)/' build --include='*.d' 2>/dev/null),$(shell rm -f $(d) $(d:.d=.o)))
 BUILD_ID := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 Q ?= @
 
 DJENV := env LD_LIBRARY_PATH=$(DJGPP_PREFIX)/hostlib
 DJCC  := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-gcc
 DJAR  := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-ar
-DJ_CFLAGS := -std=gnu99 -O2 -march=i586 -mtune=pentium2 -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include \
+DJ_CFLAGS := -std=gnu99 -O2 -march=i586 -mtune=pentium2 -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include -I$(GLOS)/include \
              -DMGA_DJGPP=1 -DDGL_BUILD_ID='"$(BUILD_ID)"'
 DJ_TESTFLAGS := -I$(MGAHAL)/tests/shim -DHX_BUILD_ID='"$(BUILD_ID)"'
 # PROF=1: the whole tree with stage timers (MGA_PROF, hal/include/mga/prof.h):
@@ -52,11 +56,11 @@ all: lib examples
 build/djgpp/%.o: %.c build/prof_mode
 	@mkdir -p $(dir $@)
 	$(Q)echo "  DJCC    $<"
-	$(Q)$(DJCC) $(DJ_CFLAGS) -MMD -c -o $@ $<
+	$(Q)$(DJCC) $(DJ_CFLAGS) -MMD -MP -c -o $@ $<
 build/djgpp/mgahal/%.o: $(MGAHAL)/%.c build/prof_mode
 	@mkdir -p $(dir $@)
 	$(Q)echo "  DJCC    $<"
-	$(Q)$(DJCC) $(DJ_CFLAGS) -MMD -c -o $@ $<
+	$(Q)$(DJCC) $(DJ_CFLAGS) -MMD -MP -c -o $@ $<
 -include $(shell find build/djgpp -name '*.d' 2>/dev/null)
 
 # The version string carries the build ID: rebuild it whenever the ID changes
@@ -217,15 +221,15 @@ tests-host: build/host/test_gl_h_abi $(UNIT_TESTS:%=build/host/test_%)
 # real card through the HAL's Linux port: the conformance tests, static, for
 # a machine with a Matrox chip (tools/rig/run.py; docs/rig.md). Built in the
 # dev container (gcc-multilib).
-RIG_CFLAGS := -std=gnu99 -O2 -m32 -march=i586 -mfpmath=387 -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include \
+RIG_CFLAGS := -std=gnu99 -O2 -m32 -march=i586 -mfpmath=387 -Wall -Wextra -Werror -Iinclude -I$(MGAHAL)/hal/include -I$(GLOS)/include \
               -DDGL_RIG=1 -DDGL_BUILD_ID='"$(BUILD_ID)-rig"'
 RIG_HAL := $(filter-out %/port/djgpp.c,$(HAL_SRCS)) $(MGAHAL)/hal/port/linux.c
 build/rig/%.o: %.c
 	@mkdir -p $(dir $@)
-	$(Q)$(HOST_CC) $(RIG_CFLAGS) -MMD -c -o $@ $<
+	$(Q)$(HOST_CC) $(RIG_CFLAGS) -MMD -MP -c -o $@ $<
 build/rig/mgahal/%.o: $(MGAHAL)/%.c
 	@mkdir -p $(dir $@)
-	$(Q)$(HOST_CC) $(RIG_CFLAGS) -MMD -c -o $@ $<
+	$(Q)$(HOST_CC) $(RIG_CFLAGS) -MMD -MP -c -o $@ $<
 build/rig/libGL.a: $(DGL_SRCS:%.c=build/rig/%.o) $(GEN_SRCS:%.c=build/rig/%.o) $(call hal_objs,rig,$(RIG_HAL))
 	$(Q)rm -f $@ && ar rcs $@ $^
 build/rig/conform/%: build/rig/libGL.a tests/conform/ct_rig.c
@@ -236,7 +240,7 @@ build/rig/rigbench: build/rig/libGL.a tests/rig/rigbench.c
 	$(Q)$(HOST_CC) $(RIG_CFLAGS) -static -o $@ tests/rig/rigbench.c build/rig/libGL.a -lm
 rig-build: $(foreach t,$(CONFORM),build/rig/conform/$(t)) build/rig/rigbench
 rig:
-	$(MGAHAL)/tools/dev $(MAKE) -s rig-build
+	MGA_EXTRA_DIR=$(GLOS) $(MGAHAL)/tools/dev $(MAKE) -s rig-build
 .PHONY: rig rig-build
 
 # Loop A: the shared harness (86Box with the local patches), run in the
