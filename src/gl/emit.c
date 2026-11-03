@@ -46,19 +46,13 @@ static float guard_px = 2000.0f;
 static int skip_all;                  /* depth or alpha function NEVER, or no context */
 static float tri_offset;              /* glPolygonOffset for the triangle being drawn (depth steps) */
 static float guard_x, guard_y;
-/* The G400 family: triangles set up by the chip's WARP engine from the
- * projected vertices instead of by setup_triangle (MGA-Glide
- * docs/g400-warp.md), unless DGL_WARP=0. The G200 too with DGL_WARP=1,
- * until its WARP has passed on the real card (MGA-Glide docs/g200-warp.md).
- * Lines and points, and any triangle after the WARP fails, go through
- * setup_triangle. */
+/* The G200 and the G400 family: triangles set up by the chip's WARP engine
+ * from the projected vertices instead of by setup_triangle (MGA-Glide
+ * docs/g400-warp.md, docs/g200-warp.md), unless DGL_WARP=0. Lines and
+ * points, and any triangle after the WARP fails, go through setup_triangle. */
 static int warp_on;                   /* asked for, on a chip with a WARP */
 static int warp_now;                  /* the current state draws through the WARP */
 static int warp_since_cpu;            /* WARP triangles since setup_triangle's last: its shadows are stale */
-/* The G200 filters from texel corners: half a texel off the WARP's map-0
- * coordinates when filtering bilinearly, as tex_adjust_coords does on the
- * CPU's path (the G400 samples at texel centres itself: 0 there). */
-static float warp_half_u, warp_half_v;
 
 /* ---- State validation --------------------------------------------------- */
 static uint32_t zmode_for(GLenum f)
@@ -297,11 +291,6 @@ static void validate_state(void)
          * clip barrier draws with it, the maps' sizes as the microcode wants
          * them. */
         warp_now = 0;
-        warp_half_u = warp_half_v = 0;
-        if (textured == 1 && tstate.bilinear && !mga.texel_centre) {
-            warp_half_u = 0.5f / (float)(1 << tstate.w_log2);
-            warp_half_v = 0.5f / (float)(1 << tstate.h_log2);
-        }
         if (warp_on) {
             if (warp_select(WARP_S | WARP_A | WARP_F | (dual ? WARP_T2 : 0)) == 0) {
                 warp_now = 1;
@@ -455,8 +444,8 @@ static void to_wvtx(const proj *p, const mga_svtx *v, mga_wvtx *w)
     w->rhw = v->q;
     w->bgra = byte_of(v->b) | (byte_of(v->g) << 8) | (byte_of(v->r) << 16) | (byte_of(v->a) << 24);
     w->spec = byte_of(v->sb) | (byte_of(v->sg) << 8) | (byte_of(v->sr) << 16) | (byte_of(v->fog) << 24);
-    w->u0 = v->s * rq - warp_half_u;
-    w->v0 = v->t * rq - warp_half_v;
+    w->u0 = v->s * rq;
+    w->v0 = v->t * rq;
     w->u1 = v->s1 * rq;
     w->v1 = v->t1 * rq;
 }
@@ -615,11 +604,11 @@ static void warp_form(const dgl_cvtx *c, const proj *p, mga_wvtx *w)
     w->bgra = byte_of(v->b) | (byte_of(v->g) << 8) | (byte_of(v->r) << 16) | (byte_of(v->a) << 24);
     w->spec = byte_of(v->sb) | (byte_of(v->sg) << 8) | (byte_of(v->sr) << 16) | (byte_of(v->fog) << 24);
     if (map0_unit) {
-        w->u0 = c->s1 * tex_scale_s - warp_half_u;
-        w->v0 = c->t1 * tex_scale_t - warp_half_v;
+        w->u0 = c->s1 * tex_scale_s;
+        w->v0 = c->t1 * tex_scale_t;
     } else {
-        w->u0 = c->s * tex_scale_s - warp_half_u;
-        w->v0 = c->t * tex_scale_t - warp_half_v;
+        w->u0 = c->s * tex_scale_s;
+        w->v0 = c->t * tex_scale_t;
     }
     if (dual) {
         w->u1 = map1_copy ? w->u0 / tex_scale_s * tex_scale_s1 : c->s1 * tex_scale_s1;
@@ -842,11 +831,11 @@ static const fast_vtx *fast_get(GLint i)
         f->w.u0 = f->w.v0 = 0;
     } else if (dgl_pl_t.on) {
         const float *t = (const float *)(dgl_pl_t.p + (size_t)i * dgl_pl_t.stride);
-        f->w.u0 = t[0] * tex_scale_s - warp_half_u;
-        f->w.v0 = t[1] * tex_scale_t - warp_half_v;
+        f->w.u0 = t[0] * tex_scale_s;
+        f->w.v0 = t[1] * tex_scale_t;
     } else {
-        f->w.u0 = fs0 - warp_half_u;
-        f->w.v0 = ft0 - warp_half_v;
+        f->w.u0 = fs0;
+        f->w.v0 = ft0;
     }
     if (textured == 1) {                /* wrap_dw's floor, ahead: the smallest of three is the floor of the smallest */
         f->fu = f->w.u0 > -1e9f && f->w.u0 < 1e9f ? mga_ifloor(f->w.u0) : NO_FLOOR;
@@ -1273,12 +1262,12 @@ void dgl_emit_no_warp(void)
 void dgl_emit_install(void)
 {
     const char *e = getenv("DGL_WARP");
-    warp_g200 = e && *e == '1';                 /* DGL_WARP=1: the G200's too (MGA-Glide docs/g200-warp.md) */
     warp_on = !(e && *e == '0') && warp_available() && !dgl_glos.on;  /* (not in a GLOS window: dgl/glos.c) */
     e = getenv("DGL_WARPDMA");
     warp_use_dma = !(e && *e == '0');          /* DGL_WARPDMA=0: vertices by the CPU, no DMA stream */
     e = getenv("DGL_AGP");
     warp_use_agp = !(e && *e == '0');          /* DGL_AGP=0: cached rings fetched by PCI, under GLOS too */
+    warp_agp_rate = e && (*e == '1' || *e == '2') ? *e - '0' : 0;   /* DGL_AGP=1 or 2: at most 1x or 2x */
     if ((e = getenv("DGL_SEQ")) != NULL)
         seq_kinds = atoi(e) & 7;
     if ((e = getenv("DGL_KICK")) != NULL && atoi(e) >= 512)
