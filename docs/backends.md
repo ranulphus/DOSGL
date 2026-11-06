@@ -85,11 +85,25 @@ include the WARP, AGP, dual texture, the HAL's 2D engine and GLOS's GPU lock. Th
   - **Full screen:** VBE 2.0 linear framebuffers, or banked ones.
   - **A GLOS window:** the window's pixels (GLOS API 2.0's call for them), so windowed DOS-GL needs no Matrox card.
   - `dglInit` no longer refuses a PC without a Matrox card: it takes the software renderer.
-- **B4, tests:**
-  - DOS-GL's conformance on the software renderer, against the same OSMesa references (D16), with the same
-    tolerances, at 8, 16 and 32 bits, with and without MMX, in Loop A on a VBE card (86Box's S3), and on bench-g400 with `DGL_DEVICE=soft`;
-  - the games and GLOS's screensavers on the S3;
-  - timings recorded for the CPU floors.
+- **B4, tests, in three tiers** (the owner's choice, 2026-11-06: 86Box's speed must not make suites hours long):
+  - **Tier 1, the host, on every change:**
+    - DOS-GL's GL layer and the software renderer built for Linux (32-bit, its MMX loops included), drawing into
+      memory;
+    - each conformance test compared with its OSMesa reference (D16), with the same tolerances, at 8, 16 and 32 bits,
+      with and without MMX;
+    - natively, in seconds. Most of the renderer's testing happens here.
+  - **Tier 2, 86Box, a short smoke:**
+    - a few conformance tests at one depth on the S3 card (VBE full screen), the GLOS window path, one game's first
+      frames;
+    - enough to show the DOS side and GLOS's windows reach the screen;
+    - unattended, minutes.
+  - **Tier 3, the Pentium 4 bench (G450), the silicon tier:**
+    - the full conformance matrix on the software renderer (`DGL_DEVICE=soft`) and on the G450 (`mga`);
+    - the games' timings, which set the CPU floors;
+    - before merges and in batches, through the Loop B tools over SSH;
+    - power-cycled by a network-switched plug, so it runs unattended.
+  - **The Matrox back end (B1):** still pixel-identical in tier 2 on the G200, G400 and G450, as today, and on
+    bench-g400.
 - **B5, the docs:** the PRD amended (D4 and the two non-goals, with a new decision for back ends), the porting and
   testing guides, the release notes.
 
