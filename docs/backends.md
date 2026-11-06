@@ -1,6 +1,7 @@
 # DOS-GL with more than one back end: the software renderer first, a plan
 
-**Status (2026-11-06): plan v0, for the owner's review. Nothing in it is built yet.**
+**Status (2026-11-06): plan v1, approved by the owner. B0 next, beside GLOS's phase A; B1 once DOS-GL's merge into
+MGA-Glide has landed. Nothing built yet.**
 
 The owner's decision (2026-11-06), from GLOS's v1 route (GLOS `docs/v1-route.md`): **DOS-GL gains a software
 renderer**, so that DOS-GL programs run on any graphics card. GLOS v1 needs it for two things:
@@ -70,13 +71,15 @@ include the WARP, AGP, dual texture, the HAL's 2D engine and GLOS's GPU lock. Th
     multitexture DOS-GL already offers (two units).
   - **Per-pixel work:** depth (16 bits, 32 where asked), alpha test, blend, fog (per vertex and per pixel as GL
     allows), scissor, colour mask; stencil if B0 finds a user.
-  - **Colour formats:** 16 bits (RGB565, GLOS's windowed format) and 32 bits; 8 bits with a fixed palette for the
-    VBE cards that need it.
-  - **Speed:** the inner loops written for a Pentium first, with MMX where the CPU has it, and kept correct on a
-    486.
+  - **Colour formats:** 16 bits (RGB565, GLOS's windowed format), 32 bits, and 8 bits with a fixed palette, for
+    VBE cards whose useful modes are 8-bit (the owner's answer).
+  - **Speed:**
+    - MMX inner loops from the first version, on the CPUs that have it (Pentium MMX, Pentium II and III; the
+      owner's answer);
+    - plain loops beside them for the rest, kept correct on a 486.
   - **The CPU floor, per program:**
     - GLOS's screensavers at modest sizes on a 486DX2 or better;
-    - games at 320x200 on a Pentium II;
+    - games at 320x200 on a Pentium II: a goal, tested and tuned (the owner's answer);
     - stated in GLOS's app plans (GLOS's per-app minimum).
 - **B3, where it draws:**
   - **Full screen:** VBE 2.0 linear framebuffers, or banked ones.
@@ -84,7 +87,7 @@ include the WARP, AGP, dual texture, the HAL's 2D engine and GLOS's GPU lock. Th
   - `dglInit` no longer refuses a PC without a Matrox card: it takes the software renderer.
 - **B4, tests:**
   - DOS-GL's conformance on the software renderer, against the same OSMesa references (D16), with the same
-    tolerances, at 16 and 32 bits, in Loop A on a VBE card (86Box's S3), and on bench-g400 with `DGL_DEVICE=soft`;
+    tolerances, at 8, 16 and 32 bits, with and without MMX, in Loop A on a VBE card (86Box's S3), and on bench-g400 with `DGL_DEVICE=soft`;
   - the games and GLOS's screensavers on the S3;
   - timings recorded for the CPU floors.
 - **B5, the docs:** the PRD amended (D4 and the two non-goals, with a new decision for back ends), the porting and
@@ -101,10 +104,12 @@ include the WARP, AGP, dual texture, the HAL's 2D engine and GLOS's GPU lock. Th
 - **Merges and pushes** in DOS-GL (or MGA-Glide) with the owner's approval, each after the full regression (B1:
   pixel-identical on every card).
 
-## Open questions, for B0
+## The owner's answers (2026-11-06)
 
-1. **Games on the software renderer:** a goal (ClassiCube and Quake at 320x200 on a Pentium II), or only GLOS's
-   screensavers and windowed apps?
-2. **8 bits:** a fixed palette for VBE cards with only 8-bit modes, or 16 and 32 bits only?
-3. **MMX:** inner loops for MMX CPUs (Pentium MMX, Pentium II) in v1, or plain code first?
-4. **Stencil:** in the software renderer from the start, or only when a program needs it?
+1. **Games run on the software renderer: a goal.** ClassiCube and Quake at 320x200 on a Pentium II, tested in Loop A
+   on the S3 card.
+2. **8 bits too:** a fixed palette for VBE cards with only 8-bit modes, beside 16 and 32 bits.
+3. **MMX from the start,** with plain loops for other CPUs.
+4. **The plan approved as it stands.** Merges and pushes stay with the owner's approval.
+
+Still to settle in B0: stencil in the software renderer from the start, or only when a program needs it.
