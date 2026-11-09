@@ -1,6 +1,5 @@
-/build/
-/out/
-/config.local.mk
-__pycache__/
-*.pyc
-/dist/
+# The tombstone keeps README.md and this Makefile; what was built or kept locally before the move stays ignored.
+/*
+!/README.md
+!/Makefile
+!/.gitignore
